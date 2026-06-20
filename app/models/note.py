@@ -1,0 +1,28 @@
+"""Note document model for MongoDB."""
+
+
+def create_note_document(
+    user_id: str,
+    subject_tag: str,
+    original_text: str,
+    summary: str,
+    note_type: str = "manual",
+    subject_name: str = "",
+    description: str = "",
+    generated_notes: str = "",
+) -> dict:
+    """Create a note document ready for MongoDB insertion."""
+    return {
+        "user_id": user_id,
+        "subject": subject_tag,
+        "subject_name": subject_name,
+        "description": description,
+        "original_text": original_text,
+        "summary": summary,
+        "generated_notes": generated_notes,
+        "type": note_type,  # "manual" | "auto_generated"
+        "is_favorite": False,
+        "tags": [],
+        "created_at": None,
+        "updated_at": None,
+    }

@@ -1,0 +1,56 @@
+# Dependency directories
+node_modules/
+jspm_packages/
+web_modules/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Databases & local storage
+mongodb-data/
+mongodb/
+mongodb.zip
+db.sqlite3
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# UiPath local project files
+uipath/NeuroLearnAI/.local/
+uipath/NeuroLearnAI/.objects/
+uipath/NeuroLearnAI/.settings/
+uipath/NeuroLearnAI/.tmh/
+uipath/NeuroLearnAI/.project/
+uipath/NeuroLearnAI/.entities/

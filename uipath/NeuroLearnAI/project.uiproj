@@ -1,0 +1,6 @@
+{
+  "Name": "NeuroLearnAI",
+  "ProjectType": "Process",
+  "Description": "Blank ProcessRPA automation for NeurolearnAI study planner - reminders, web scraping, reports",
+  "MainFile": "Main.xaml"
+}

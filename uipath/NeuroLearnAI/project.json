@@ -1,0 +1,61 @@
+{
+  "name": "NeuroLearnAI",
+  "projectId": "1b99e27c-81ef-40c4-b558-0d5759968f5b",
+  "description": "Blank ProcessRPA automation for NeurolearnAI study planner - reminders, web scraping, reports",
+  "main": "Main.xaml",
+  "dependencies": {
+    "Newtonsoft.Json.Bson": "[1.0.3]",
+    "UiPath.Database.Activities": "[2.1.1]",
+    "UiPath.Mail.Activities": "[2.9.10]",
+    "UiPath.System.Activities": "[26.4.1-preview]",
+    "UiPath.WebAPI.Activities": "[2.5.0-preview]"
+  },
+  "webServices": [],
+  "entitiesStores": [],
+  "schemaVersion": "4.0",
+  "studioVersion": "26.0.195.0",
+  "projectVersion": "1.0.2",
+  "runtimeOptions": {
+    "autoDispose": false,
+    "netFrameworkLazyLoading": false,
+    "isPausable": true,
+    "isAttended": false,
+    "requiresUserInteraction": true,
+    "supportsPersistence": false,
+    "workflowSerialization": "NewtonsoftJson",
+    "excludedLoggedData": [
+      "Private:*",
+      "*password*"
+    ],
+    "executionType": "Workflow",
+    "readyForPiP": false,
+    "startsInPiP": false,
+    "mustRestoreAllDependencies": true,
+    "pipType": "ChildSession"
+  },
+  "designOptions": {
+    "projectProfile": "Developement",
+    "outputType": "Process",
+    "libraryOptions": {
+      "privateWorkflows": []
+    },
+    "processOptions": {
+      "ignoredFiles": []
+    },
+    "fileInfoCollection": [],
+    "saveToCloud": false
+  },
+  "expressionLanguage": "VisualBasic",
+  "entryPoints": [
+    {
+      "filePath": "Main.xaml",
+      "uniqueId": "cdb5d06a-cd3e-4948-ae51-c6757881828e",
+      "input": [],
+      "output": []
+    }
+  ],
+  "isTemplate": false,
+  "templateProjectData": {},
+  "publishData": {},
+  "targetFramework": "Windows"
+}
