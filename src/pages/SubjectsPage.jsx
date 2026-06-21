@@ -105,6 +105,24 @@ export default function SubjectsPage() {
         });
       }
 
+      // Automatically generate a study plan & AI summary notes in the background
+      const planDeadline = form.deadline || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const planDesc = notesContent || form.description || `Learning schedule for ${form.name}`;
+
+      await Promise.all([
+        api.post('/api/study-plans/generate', {
+          description: planDesc,
+          subject_name: form.name,
+          deadline: planDeadline,
+          daily_minutes: Number(form.daily_study_minutes) || 45
+        }).catch(err => console.error("Auto study plan generation failed", err)),
+
+        api.post('/api/notes/generate-auto', {
+          description: planDesc,
+          subject_name: form.name
+        }).catch(err => console.error("Auto notes generation failed", err))
+      ]);
+
       setForm({ name: '', description: '', color: COLORS[0], priority: 'Medium', deadline: '', daily_study_minutes: 45 });
       setNewSubFileText('');
       setShowForm(false);
@@ -113,8 +131,9 @@ export default function SubjectsPage() {
       if (res.data.subject?._id) {
         setSelectedSubId(res.data.subject._id);
       }
+
       await loadSubjects();
-      setSuccessMsg('Subject created successfully and notes saved to Study Library!');
+      setSuccessMsg('Subject created successfully, and study plan + notes generated!');
     } catch (err) {
       setError('Failed to create subject or upload notes.');
     } finally {

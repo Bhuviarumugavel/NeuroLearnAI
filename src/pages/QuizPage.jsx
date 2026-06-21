@@ -2,6 +2,7 @@
  * QuizPage.jsx — Quiz Center Page
  * Evaluates understanding through AI-generated quizzes.
  * A subject is marked Completed if the score is >= 80%; otherwise, it is flagged for a retest.
+ * Supports generating quizzes on specific study plan topics or custom topics.
  */
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
@@ -56,8 +57,11 @@ export default function QuizPage() {
   const { startSession, stopSession } = useStudyTimer();
 
   const [subjects, setSubjects] = useState([]);
+  const [plans, setPlans] = useState([]);
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
-  const [quizSource, setQuizSource] = useState('name'); // 'name' | 'notes' | 'custom'
+  const [quizSource, setQuizSource] = useState('name'); // 'name' | 'topic' | 'custom_topic' | 'notes' | 'custom'
+  const [selectedTopicIndex, setSelectedTopicIndex] = useState('all');
+  const [customTopicInput, setCustomTopicInput] = useState('');
   const [customText, setCustomText] = useState('');
   const [numQuestions, setNumQuestions] = useState(5);
   const [loading, setLoading] = useState(false);
@@ -77,17 +81,22 @@ export default function QuizPage() {
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(true);
 
-  // Fetch subjects
+  // Fetch subjects and study plans
   useEffect(() => {
-    api.get('/api/subjects')
-      .then((r) => {
-        const list = r.data.subjects || [];
-        setSubjects(list);
-        if (list.length > 0) {
-          setSelectedSubjectId(list[0]._id || list[0].id);
-        }
-      })
-      .catch(() => {});
+    Promise.all([
+      api.get('/api/subjects'),
+      api.get('/api/study-plans')
+    ]).then(([subsRes, plansRes]) => {
+      const list = subsRes.data.subjects || [];
+      setSubjects(list);
+      setPlans(plansRes.data.plans || []);
+      if (list.length > 0) {
+        setSelectedSubjectId(list[0]._id || list[0].id);
+      }
+    }).catch(err => {
+      console.error(err);
+    });
+    
     loadHistory();
   }, []);
 
@@ -97,6 +106,11 @@ export default function QuizPage() {
       .catch(() => {})
       .finally(() => setHistoryLoading(false));
   };
+
+  const activeSub = subjects.find(s => (s._id || s.id) === selectedSubjectId);
+  const subjectName = activeSub ? activeSub.name : 'General';
+  const matchedPlan = plans.find(p => p.subject_name === subjectName);
+  const subjectTopics = matchedPlan?.topics || [];
 
   const handleStartQuiz = async (e) => {
     e.preventDefault();
@@ -112,14 +126,12 @@ export default function QuizPage() {
     setCurrentIdx(0);
     setScoreData(null);
 
-    const activeSub = subjects.find(s => (s._id || s.id) === selectedSubjectId);
-    const subjectName = activeSub ? activeSub.name : 'General';
-
     // Start background study timer for this subject
     startSession(selectedSubjectId, subjectName);
 
     // Prepare quiz source text
     let sourceText = '';
+    
     if (quizSource === 'custom') {
       if (!customText.trim()) {
         setError('Please paste study text to generate quiz.');
@@ -132,14 +144,28 @@ export default function QuizPage() {
         const notesRes = await api.get(`/api/notes?subject=${encodeURIComponent(subjectName)}`);
         const subNotes = notesRes.data.notes || [];
         if (subNotes.length === 0) {
-          setError(`No notes found in Study Library for ${subjectName}. Pushing prompt-based generation fallback.`);
-          sourceText = `Create a test on the key educational concepts, terms, definitions, and facts of the course: ${subjectName}`;
+          setError(`No notes found in Study Library for ${subjectName}. Falling back to topic-based generation.`);
+          sourceText = `Create a test on the key concepts of the course: ${subjectName}`;
         } else {
-          sourceText = subNotes.map(n => `${n.title}\n${n.original_text || n.summary}`).join('\n\n');
+          sourceText = subNotes.map(n => `${n.title || ''}\n${n.original_text || n.summary}`).join('\n\n');
         }
       } catch (err) {
         sourceText = `Generate MCQ assessment questions on: ${subjectName}`;
       }
+    } else if (quizSource === 'topic') {
+      if (selectedTopicIndex === 'all') {
+        sourceText = `Create a multiple-choice academic quiz covering the core topics: ${subjectTopics.map(t => t.name).join(', ')} for the course: ${subjectName}`;
+      } else {
+        const topic = subjectTopics[Number(selectedTopicIndex)];
+        sourceText = `Create a multiple-choice academic quiz covering the topic: "${topic?.name}" (Day ${topic?.day}) for the course: ${subjectName}`;
+      }
+    } else if (quizSource === 'custom_topic') {
+      if (!customTopicInput.trim()) {
+        setError('Please enter custom study topics.');
+        setLoading(false);
+        return;
+      }
+      sourceText = `Create a multiple-choice academic quiz covering these user-specified topics: "${customTopicInput}" for the course: ${subjectName}`;
     } else {
       sourceText = `Create a multiple-choice academic quiz with questions, options, and answers covering major points of: ${subjectName}`;
     }
@@ -181,7 +207,6 @@ export default function QuizPage() {
     setSubmitting(true);
     setError('');
 
-    // Compile answer list
     const answersList = [];
     for (let i = 0; i < questions.length; i++) {
       answersList.push(selectedAnswers[i] || "");
@@ -200,7 +225,6 @@ export default function QuizPage() {
         results: res.data.results
       });
 
-      // Stop study session timer (persists study time metrics)
       stopSession();
       loadHistory();
     } catch (err) {
@@ -217,6 +241,7 @@ export default function QuizPage() {
     setScoreData(null);
     setCurrentIdx(0);
     setCustomText('');
+    setCustomTopicInput('');
   };
 
   const isCompleted = scoreData?.percentage >= 80;
@@ -234,6 +259,7 @@ export default function QuizPage() {
       {/* State 1: Configuration Form */}
       {questions.length === 0 && !scoreData && (
         <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '24px', alignItems: 'start' }}>
+          
           {/* Settings Card */}
           <div className="card">
             <h2 className="section-title">⚡ Configure Quiz</h2>
@@ -247,7 +273,8 @@ export default function QuizPage() {
               </div>
             ) : (
               <form onSubmit={handleStartQuiz} className="flex-col" id="quiz-config-form">
-                {/* Subject dropdown */}
+                
+                {/* Subject Selector */}
                 <div className="form-group">
                   <label className="form-label" htmlFor="quiz-subject-select">Select Subject</label>
                   <select 
@@ -262,16 +289,30 @@ export default function QuizPage() {
                   </select>
                 </div>
 
-                {/* Source Selection */}
+                {/* Source Selection Options */}
                 <div className="form-group">
                   <label className="form-label">Quiz Generation Source</label>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '10px' }}>
                     <button 
                       type="button" 
                       className={`btn btn-sm ${quizSource === 'name' ? 'btn-primary' : 'btn-outline'}`}
                       onClick={() => setQuizSource('name')}
                     >
                       Subject Name
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`btn btn-sm ${quizSource === 'topic' ? 'btn-primary' : 'btn-outline'}`}
+                      onClick={() => setQuizSource('topic')}
+                    >
+                      Plan Topics
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`btn btn-sm ${quizSource === 'custom_topic' ? 'btn-primary' : 'btn-outline'}`}
+                      onClick={() => setQuizSource('custom_topic')}
+                    >
+                      Custom Topics
                     </button>
                     <button 
                       type="button" 
@@ -290,7 +331,47 @@ export default function QuizPage() {
                   </div>
                 </div>
 
-                {/* Custom Text input if selected */}
+                {/* Study Plan Topic Select */}
+                {quizSource === 'topic' && (
+                  <div className="form-group animate-fade-in">
+                    <label className="form-label" htmlFor="quiz-topic-select">Select Study Plan Topic</label>
+                    {subjectTopics.length === 0 ? (
+                      <div className="text-muted text-xs" style={{ background: 'rgba(239, 68, 68, 0.05)', padding: '10px', borderRadius: '6px', border: '1px dashed var(--border-subtle)' }}>
+                        ⚠️ No active study plan topics found. Generating a quiz will default to the general subject overview.
+                      </div>
+                    ) : (
+                      <select
+                        id="quiz-topic-select"
+                        className="form-input"
+                        value={selectedTopicIndex}
+                        onChange={(e) => setSelectedTopicIndex(e.target.value)}
+                      >
+                        <option value="all">All Plan Topics ({subjectTopics.length} total)</option>
+                        {subjectTopics.map((t, idx) => (
+                          <option key={idx} value={idx}>Day {t.day}: {t.name}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                )}
+
+                {/* Custom Topic Input */}
+                {quizSource === 'custom_topic' && (
+                  <div className="form-group animate-fade-in">
+                    <label className="form-label" htmlFor="quiz-custom-topic">Enter Topics for Quiz *</label>
+                    <input 
+                      id="quiz-custom-topic"
+                      type="text"
+                      className="form-input"
+                      placeholder="e.g. Newton's laws, integration by parts, cell biology"
+                      value={customTopicInput}
+                      onChange={(e) => setCustomTopicInput(e.target.value)}
+                      required
+                    />
+                  </div>
+                )}
+
+                {/* Custom Text input */}
                 {quizSource === 'custom' && (
                   <div className="form-group animate-fade-in">
                     <label className="form-label" htmlFor="quiz-source-text">Paste Study Material</label>
@@ -321,7 +402,6 @@ export default function QuizPage() {
                   </select>
                 </div>
 
-                {/* Launch Button */}
                 <button 
                   type="submit" 
                   id="quiz-start-btn"
@@ -413,7 +493,6 @@ export default function QuizPage() {
       {scoreData && (
         <div style={{ maxWidth: '640px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
-          {/* Main Results Card */}
           <div 
             className="card animate-slide-up" 
             style={{ 
@@ -440,7 +519,6 @@ export default function QuizPage() {
             <button className="btn btn-primary mt-24" onClick={handleReset}>Try Another Quiz</button>
           </div>
 
-          {/* Questions Review list */}
           <div className="card">
             <h3 className="section-title mb-16">📋 Question Review</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
