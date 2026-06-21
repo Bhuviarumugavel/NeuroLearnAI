@@ -58,7 +58,21 @@ export default function LoginPage() {
         </div>
 
         <h1 className="auth-title" style={{ fontSize: '1.5rem' }}>Welcome back</h1>
-        <p className="auth-subtitle">Sign in to continue your learning journey</p>
+        <p className="auth-subtitle" style={{ marginBottom: '16px' }}>Sign in to continue your learning journey</p>
+
+        <p style={{
+          fontSize: '0.85rem',
+          color: 'var(--text-secondary)',
+          textAlign: 'center',
+          lineHeight: '1.5',
+          marginBottom: '24px',
+          background: 'linear-gradient(135deg, rgba(124, 58, 237, 0.06) 0%, rgba(59, 130, 246, 0.03) 100%)',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          border: '1px solid var(--border-subtle)'
+        }}>
+          <strong>NeurolearnAI</strong> is an AI-powered study planner designed to organize your notes, generate personalized quizzes, build adaptive study schedules, and track your progress.
+        </p>
 
         {error && <div className="auth-error">{error}</div>}
 
