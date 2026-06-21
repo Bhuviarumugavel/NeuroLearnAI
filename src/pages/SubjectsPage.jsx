@@ -16,6 +16,7 @@ export default function SubjectsPage() {
   const [selectedSubId, setSelectedSubId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', color: COLORS[0], priority: 'Medium', deadline: '', daily_study_minutes: 45 });
+  const [newSubFileText, setNewSubFileText] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Detail panel tabs: 'config' | 'ai' | 'manual'
@@ -29,6 +30,7 @@ export default function SubjectsPage() {
   const [uploadingManual, setUploadingManual] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+
 
   const loadSubjects = async () => {
     try {
@@ -54,21 +56,57 @@ export default function SubjectsPage() {
     loadSubjects();
   }, []);
 
+  const handleNewSubFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const isText = file.type === "text/plain" || file.name.endsWith('.txt') || file.name.endsWith('.md');
+      if (!isText) {
+        setError("Note: Live parsing is currently supported for plain text (.txt, .md) files. For other formats, please paste the text content.");
+        return;
+      }
+      setError('');
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setNewSubFileText(event.target.result);
+      };
+      reader.readAsText(file);
+    }
+  };
+
   const handleCreateSubject = async (e) => {
     e.preventDefault();
     if (!form.name.trim()) return;
+
+    const hasDescription = form.description && form.description.trim().length > 0;
+    const hasFile = newSubFileText && newSubFileText.trim().length > 0;
+    if (!hasDescription && !hasFile) {
+      setError('Please provide a notes description/syllabus OR upload a notes file (at least one is mandatory).');
+      return;
+    }
+
     setSaving(true);
     setError('');
+    setSuccessMsg('');
     try {
       const res = await api.post('/api/subjects', {
         name: form.name,
-        description: form.description,
+        description: form.description || 'Subject configured with uploaded notes.',
         color: form.color,
         priority: form.priority,
         deadline: form.deadline || null,
         daily_study_minutes: Number(form.daily_study_minutes)
       });
+      
+      const notesContent = newSubFileText.trim() || form.description.trim();
+      if (notesContent) {
+        await api.post('/api/notes', {
+          text: notesContent,
+          subject_tag: form.name
+        });
+      }
+
       setForm({ name: '', description: '', color: COLORS[0], priority: 'Medium', deadline: '', daily_study_minutes: 45 });
+      setNewSubFileText('');
       setShowForm(false);
       
       // Select the newly created subject
@@ -76,8 +114,9 @@ export default function SubjectsPage() {
         setSelectedSubId(res.data.subject._id);
       }
       await loadSubjects();
+      setSuccessMsg('Subject created successfully and notes saved to Study Library!');
     } catch (err) {
-      setError('Failed to create subject.');
+      setError('Failed to create subject or upload notes.');
     } finally {
       setSaving(false);
     }
@@ -87,6 +126,11 @@ export default function SubjectsPage() {
     e.preventDefault();
     const activeSub = subjects.find(s => (s._id || s.id) === selectedSubId);
     if (!activeSub) return;
+
+    if (!activeSub.description || !activeSub.description.trim()) {
+      setError('Subject description/notes summary is mandatory.');
+      return;
+    }
 
     setSaving(true);
     setError('');
@@ -202,10 +246,30 @@ export default function SubjectsPage() {
                   <input id="new-sub-name" className="form-input" placeholder="e.g. Mathematics II" value={form.name}
                     onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} required />
                 </div>
+                <div style={{ background: 'rgba(59, 130, 246, 0.08)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', padding: '12px', fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
+                  ℹ️ <strong>Mandatory Note:</strong> To initialize study planner configurations, you must either write a description/syllabus of the notes below OR upload a notes file (.txt, .md).
+                </div>
                 <div className="form-group">
-                  <label className="form-label" htmlFor="new-sub-desc">Description</label>
-                  <input id="new-sub-desc" className="form-input" placeholder="Brief description…" value={form.description}
-                    onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))} />
+                  <label className="form-label" htmlFor="new-sub-desc">Description of the Notes / Syllabus</label>
+                  <textarea 
+                    id="new-sub-desc" 
+                    className="form-input" 
+                    placeholder="Enter key topics, outline, or notes text summary..." 
+                    value={form.description}
+                    onChange={(e) => setForm(f => ({ ...f, description: e.target.value }))}
+                    rows={4}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="new-sub-file">Or Upload Notes File (.txt, .md)</label>
+                  <input 
+                    id="new-sub-file" 
+                    type="file" 
+                    className="form-input" 
+                    accept=".txt,.md"
+                    onChange={handleNewSubFileChange} 
+                  />
+                  {newSubFileText && <span className="badge badge-green mt-8" style={{ display: 'inline-block' }}>✓ File parsed successfully ({newSubFileText.length} chars)</span>}
                 </div>
                 <div className="form-group">
                   <label className="form-label" htmlFor="new-sub-priority">Priority Level</label>
@@ -344,8 +408,8 @@ export default function SubjectsPage() {
                     />
                   </div>
                   <div className="form-group">
-                    <label className="form-label" htmlFor="edit-sub-desc">Description</label>
-                    <input 
+                    <label className="form-label" htmlFor="edit-sub-desc">Description of the Notes / Syllabus *</label>
+                    <textarea 
                       id="edit-sub-desc"
                       className="form-input" 
                       value={activeSub.description || ''} 
@@ -353,6 +417,8 @@ export default function SubjectsPage() {
                         const val = e.target.value;
                         setSubjects(p => p.map(s => (s._id || s.id) === selectedSubId ? { ...s, description: val } : s));
                       }} 
+                      rows={4}
+                      required
                     />
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
