@@ -10,6 +10,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017/study_planner_db")
+if MONGODB_URL:
+    MONGODB_URL = MONGODB_URL.replace("<", "").replace(">", "")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 UIPATH_CLIENT_ID = os.getenv("UIPATH_CLIENT_ID", "")
 UIPATH_CLIENT_SECRET = os.getenv("UIPATH_CLIENT_SECRET", "")
