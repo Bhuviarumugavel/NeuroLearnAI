@@ -26,3 +26,7 @@ UIPATH_ORG_NAME = os.getenv("UIPATH_ORG_NAME", "")
 UIPATH_TENANT_NAME = os.getenv("UIPATH_TENANT_NAME", "DefaultTenant")
 UIPATH_FOLDER_ID = os.getenv("UIPATH_FOLDER_ID", "")
 UIPATH_BASE_URL = os.getenv("UIPATH_BASE_URL", "https://cloud.uipath.com")
+
+# ── Default Note-Taking Scraper Credentials ──────────────
+DEFAULT_EMAIL = os.getenv("DEFAULT_EMAIL", "bhuvaneshwari23ad006@gmail.com")
+DEFAULT_PASSWORD = os.getenv("DEFAULT_PASSWORD", "23AD006@AIDS")
