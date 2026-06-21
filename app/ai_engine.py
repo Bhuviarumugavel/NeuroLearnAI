@@ -67,7 +67,8 @@ def summarize_notes(raw_text: str) -> str:
             messages=[
                 {"role": "system", "content": "You are a study assistant. Summarize notes into clear, bulleted, efficient study points."},
                 {"role": "user", "content": raw_text}
-            ]
+            ],
+            max_tokens=1500
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -96,7 +97,8 @@ def summarize_image(base64_image: str, mime_type: str) -> str:
                         }
                     ]
                 }
-            ]
+            ],
+            max_tokens=2000
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -124,7 +126,8 @@ def generate_structured_quiz(raw_text: str, num_questions: int = 5) -> list:
                     ),
                 },
                 {"role": "user", "content": raw_text},
-            ]
+            ],
+            max_tokens=1500
         )
         content = response.choices[0].message.content
         result = _parse_json_response(content)
@@ -158,7 +161,8 @@ def generate_automatic_notes(description: str) -> str:
                     "role": "user",
                     "content": f"Generate detailed study notes for the following subject:\n\n{description}",
                 },
-            ]
+            ],
+            max_tokens=2500
         )
         return response.choices[0].message.content
     except Exception:
@@ -207,12 +211,50 @@ def generate_study_plan(description: str, subject_name: str, deadline: str, dail
                         "Generate a JSON array of study topics."
                     ),
                 },
-            ]
+            ],
+            max_tokens=1500
         )
         content = response.choices[0].message.content
-        return _parse_json_response(content)
-    except Exception:
-        return None
+        parsed = _parse_json_response(content)
+        if parsed and isinstance(parsed, list) and len(parsed) > 0:
+            return parsed
+        raise ValueError("Empty or invalid AI study plan JSON array")
+    except Exception as e:
+        print(f"[generate_study_plan] OpenRouter call failed or returned invalid JSON ({e}). Compiling dynamic dietician/study schedule fallback.")
+        # Programmatic day-wise study plan fallback based on the deadline
+        from datetime import datetime
+        try:
+            deadline_str = deadline.split('T')[0] if deadline else ""
+            deadline_date = datetime.strptime(deadline_str, "%Y-%m-%d")
+            delta = deadline_date - datetime.now()
+            days = max(1, min(30, delta.days))
+        except Exception:
+            days = 7
+
+        fallback_topics = []
+        # Basic list of key topics to cover
+        core_topics = [
+            "Introduction and Fundamental Terminology",
+            "Core Concepts, Principles & Methodologies",
+            "Practical Implementations & Lab Demonstrations",
+            "Advanced Case Studies & Multi-domain Integration",
+            "Troubleshooting, Edge Cases & Performance Tuning",
+            "Practice Problems, Assessments & Active Recall Quiz",
+            "Comprehensive Final Revision & Practice Exam"
+        ]
+
+        for d in range(1, days + 1):
+            if d == days:
+                topic_name = f"Final Review & Comprehensive Study Session for {subject_name}"
+            else:
+                topic_idx = (d - 1) % len(core_topics)
+                topic_name = f"{core_topics[topic_idx]} ({subject_name})"
+            fallback_topics.append({
+                "name": topic_name,
+                "day": d,
+                "duration": daily_minutes or 45
+            })
+        return fallback_topics
 
 
 # ─────────────────────────────────────────────────────────
@@ -237,7 +279,8 @@ def generate_recommendations(context: str) -> str:
                     "role": "user",
                     "content": f"Here is my current study data:\n\n{context}\n\nGive me personalized study recommendations.",
                 },
-            ]
+            ],
+            max_tokens=1500
         )
         return response.choices[0].message.content
     except Exception:
@@ -271,7 +314,8 @@ def generate_flashcards(text: str, num_cards: int = 10) -> list:
                     ),
                 },
                 {"role": "user", "content": text},
-            ]
+            ],
+            max_tokens=1500
         )
         content = response.choices[0].message.content
         result = _parse_json_response(content)

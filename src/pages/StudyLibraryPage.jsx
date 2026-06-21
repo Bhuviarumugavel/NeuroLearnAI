@@ -113,12 +113,12 @@ export default function StudyLibraryPage() {
 
   // Filtering lists
   const filteredNotes = notes.filter(note => {
-    const matchesSubject = selectedSubjectFilter === 'All' || note.subject.toLowerCase() === selectedSubjectFilter.toLowerCase();
+    const matchesSubject = selectedSubjectFilter === 'All' || (note.subject && note.subject.toLowerCase() === selectedSubjectFilter.toLowerCase());
     
     const matchesSearch = 
-      note.subject?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      note.original_text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      note.summary?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (note.subject && note.subject.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (note.original_text && note.original_text.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (note.summary && note.summary.toLowerCase().includes(searchQuery.toLowerCase())) ||
       (note.tags && note.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase())));
 
     return matchesSubject && matchesSearch;

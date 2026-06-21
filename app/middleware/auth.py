@@ -69,4 +69,8 @@ async def get_current_user_optional(
             user["_id"] = str(user["_id"])
         return user
     except (JWTError, Exception):
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )

@@ -31,7 +31,13 @@ export default function DashboardPage() {
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingAi, setLoadingAi] = useState(true);
 
-  useEffect(() => {
+  // New state variables for Study Schedule & Notes
+  const [plans, setPlans] = useState([]);
+  const [notes, setNotes] = useState([]);
+  const [loadingSchedule, setLoadingSchedule] = useState(true);
+  const [viewNote, setViewNote] = useState(null);
+
+  const loadDashboardData = () => {
     // Fetch summary
     api.get('/api/dashboard/summary')
       .then((r) => setSummary(r.data))
@@ -43,7 +49,59 @@ export default function DashboardPage() {
       .then((r) => setRecommendations(r.data.recommendations))
       .catch(() => setRecommendations('Start by adding some subjects to get AI-driven learning tips.'))
       .finally(() => setLoadingAi(false));
+
+    // Fetch plans and notes
+    Promise.all([
+      api.get('/api/study-plans'),
+      api.get('/api/notes')
+    ]).then(([plansRes, notesRes]) => {
+      setPlans(plansRes.data.plans || []);
+      setNotes(notesRes.data.notes || []);
+    }).catch(err => {
+      console.error(err);
+    }).finally(() => {
+      setViewNote(null);
+      setLoadingSchedule(false);
+    });
+  };
+
+  useEffect(() => {
+    loadDashboardData();
   }, []);
+
+  const handleToggleTopic = async (planId, topicIdx, currentCompleted) => {
+    try {
+      // Optimistic update
+      setPlans(prevPlans => prevPlans.map(plan => {
+        if ((plan._id || plan.id) === planId) {
+          const updatedTopics = [...plan.topics];
+          updatedTopics[topicIdx] = {
+            ...updatedTopics[topicIdx],
+            completed: !currentCompleted
+          };
+          return { ...plan, topics: updatedTopics };
+        }
+        return plan;
+      }));
+
+      await api.put(`/api/study-plans/${planId}/progress`, {
+        topic_index: topicIdx,
+        completed: !currentCompleted
+      });
+      
+      // Sync dashboard data
+      loadDashboardData();
+    } catch (err) {
+      console.error("Failed to update topic progress", err);
+    }
+  };
+
+  const getTopicDateStr = (planCreatedAt, topicDay) => {
+    if (!planCreatedAt) return '';
+    const start = new Date(planCreatedAt);
+    start.setDate(start.getDate() + (topicDay - 1));
+    return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+  };
 
   const displayName = user?.full_name?.split(' ')[0] || 'Student';
   
@@ -92,6 +150,134 @@ export default function DashboardPage() {
         {/* Left Column: Performance & AI */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           
+          {/* Today's Study Schedule & Related Notes */}
+          <div className="card card-glow" style={{ borderLeft: '4px solid var(--accent-light)' }}>
+            <h2 className="section-title">📋 Today's Study Schedule & Notes</h2>
+            
+            {loadingSchedule ? (
+              <div style={{ padding: '16px', textAlign: 'center' }}>
+                <span className="spinner" style={{ display: 'inline-block' }}></span>
+              </div>
+            ) : (() => {
+              const today = new Date();
+              const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+              // Extract today's topics across all plans
+              const todayTopics = [];
+              plans.forEach(plan => {
+                plan.topics?.forEach((topic, idx) => {
+                  if (getTopicDateStr(plan.created_at, topic.day) === todayStr) {
+                    todayTopics.push({
+                      planId: plan._id || plan.id,
+                      subjectName: plan.subject_name || plan.subject,
+                      topicIndex: idx,
+                      ...topic
+                    });
+                  }
+                });
+              });
+
+              if (todayTopics.length === 0) {
+                // Render fallback listing recent notes from Study Library
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{ background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-md)', textAlign: 'center', border: '1px dashed var(--border-subtle)' }}>
+                      <div style={{ fontSize: '1.5rem', marginBottom: '4px' }}>🏖️</div>
+                      <div style={{ fontSize: '0.88rem', fontWeight: 600, color: 'var(--text-primary)' }}>No Scheduled Study Topics for Today!</div>
+                      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '4px 0 0' }}>You're fully caught up. Use this time to revise your notes library below.</p>
+                    </div>
+                    {notes.length > 0 && (
+                      <div style={{ marginTop: '8px' }}>
+                        <div style={{ fontSize: '0.75rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '8px' }}>📚 Recently Compiled Study Notes</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {notes.slice(0, 3).map((note) => {
+                            const matchedSub = summary?.subjects?.find(s => s.name.toLowerCase() === note.subject?.toLowerCase());
+                            const themeColor = matchedSub?.color || 'var(--accent-primary)';
+                            return (
+                              <div key={note._id || note.id} className="flex-between" style={{ background: 'var(--bg-input)', padding: '10px 14px', borderRadius: '8px', borderLeft: `3px solid ${themeColor}` }}>
+                                <div style={{ overflow: 'hidden', marginRight: '16px' }}>
+                                  <div style={{ fontSize: '0.83rem', fontWeight: 600, color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                                    {note.original_text ? `${note.original_text.slice(0, 45)}...` : 'AI Structured Study Note'}
+                                  </div>
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                    Subject: <span style={{ color: themeColor, fontWeight: 600 }}>{note.subject}</span> • {note.type === 'auto_generated' ? '✨ AI Generated' : '📝 Manual'}
+                                  </div>
+                                </div>
+                                <button className="btn btn-outline btn-xs" onClick={() => setViewNote(note)} style={{ padding: '4px 8px', fontSize: '0.72rem', whiteSpace: 'nowrap' }}>
+                                  🔍 Read Notes
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {todayTopics.map((topic, i) => {
+                    // Get notes matching this topic's subject
+                    const matchingNotes = notes.filter(n => n.subject?.toLowerCase() === topic.subjectName?.toLowerCase());
+                    const matchedSub = summary?.subjects?.find(s => s.name.toLowerCase() === topic.subjectName?.toLowerCase());
+                    const themeColor = matchedSub?.color || 'var(--accent-primary)';
+
+                    return (
+                      <div key={i} style={{ background: 'var(--bg-input)', padding: '14px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', borderLeft: `4px solid ${themeColor}` }}>
+                        <div className="flex-between mb-8">
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600, fontSize: '0.88rem' }}>
+                            <input 
+                              type="checkbox" 
+                              checked={topic.completed} 
+                              onChange={() => handleToggleTopic(topic.planId, topic.topicIndex, topic.completed)}
+                              style={{ width: '15px', height: '15px', accentColor: themeColor }}
+                            />
+                            <span style={{ textDecoration: topic.completed ? 'line-through' : 'none', color: topic.completed ? 'var(--text-muted)' : 'var(--text-primary)' }}>
+                              {topic.name}
+                            </span>
+                          </label>
+                          <span className="badge badge-purple" style={{ background: `${themeColor}15`, color: themeColor, border: `1px solid ${themeColor}30`, fontSize: '0.7rem' }}>
+                            {topic.subjectName}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                          ⏱️ Focus target: {topic.duration} minutes for today
+                        </div>
+
+                        {/* Associated Study Notes list */}
+                        <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid rgba(255,255,255,0.04)' }}>
+                          <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '6px' }}>📚 Available Study Notes for {topic.subjectName}</div>
+                          {matchingNotes.length === 0 ? (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span>No notes generated for this subject yet.</span>
+                              <Link to="/summarizer" className="auth-link text-xs">✨ Add Notes</Link>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                              {matchingNotes.map((note) => (
+                                <div key={note._id || note.id} className="flex-between" style={{ background: 'rgba(255,255,255,0.01)', padding: '6px 10px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.03)' }}>
+                                  <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '280px' }}>
+                                    {note.type === 'auto_generated' ? '✨ ' : '📝 '} 
+                                    {note.original_text ? `${note.original_text.slice(0, 35)}...` : 'AI Structured Study Note'}
+                                  </span>
+                                  <button className="btn btn-ghost btn-xs" onClick={() => setViewNote(note)} style={{ padding: '2px 6px', fontSize: '0.7rem' }}>
+                                    🔍 Read
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+
           {/* Subject Performance & Quiz Status Table */}
           <div className="card">
             <h2 className="section-title" style={{ justifyContent: 'space-between' }}>
@@ -272,6 +458,58 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Modal Drawer: View Note Details */}
+      {viewNote && (
+        <div className="overlay" style={{ zIndex: 1000 }}>
+          <div className="modal animate-slide-up" style={{ maxWidth: '640px', width: '100%', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header">
+              <h2 style={{ fontSize: '1.15rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                📖 Study Notes: {viewNote.subject}
+              </h2>
+              <button className="btn btn-ghost btn-sm" onClick={() => setViewNote(null)} style={{ fontSize: '1rem', padding: '4px 8px' }}>✕</button>
+            </div>
+            
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '16px', paddingRight: '4px' }}>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                <span className="badge badge-purple">Category: {viewNote.subject}</span>
+                <span className="badge badge-blue">{viewNote.type === 'auto_generated' ? '✨ AI Auto Notes' : '📝 Manual'}</span>
+              </div>
+
+              {viewNote.summary && (
+                <div style={{ padding: '16px', background: 'var(--bg-input)', borderLeft: '3px solid var(--accent-primary)', borderRadius: 'var(--radius-md)' }}>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--accent-light)', textTransform: 'uppercase', marginBottom: '6px' }}>AI Summary Points</div>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-primary)', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+                    {viewNote.summary}
+                  </p>
+                </div>
+              )}
+
+              {viewNote.original_text && (
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '6px' }}>Original Document Content</div>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: '1.6', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', whiteSpace: 'pre-wrap' }}>
+                    {viewNote.original_text}
+                  </p>
+                </div>
+              )}
+
+              {viewNote.generated_notes && (
+                <div>
+                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--accent-light)', textTransform: 'uppercase', marginBottom: '6px' }}>AI Generated Study Guide</div>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: '1.6', background: 'rgba(255,255,255,0.02)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)', whiteSpace: 'pre-wrap' }}>
+                    {viewNote.generated_notes}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border-subtle)', paddingTop: '12px' }}>
+              <button className="btn btn-outline btn-full btn-sm" onClick={() => setViewNote(null)}>Close Preview</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

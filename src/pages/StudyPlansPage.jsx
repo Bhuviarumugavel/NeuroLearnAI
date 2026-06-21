@@ -20,7 +20,19 @@ export default function StudyPlansPage() {
     if (!form.subject.trim() || !form.goal.trim()) { setError('Subject and goal are required.'); return; }
     setSaving(true); setError('');
     try {
-      await api.post('/api/study-plans/generate', form);
+      // Calculate deadline date (duration_weeks from now)
+      const deadlineDate = new Date();
+      deadlineDate.setDate(deadlineDate.getDate() + (form.duration_weeks * 7));
+      const deadlineStr = deadlineDate.toISOString().split('T')[0];
+
+      const payload = {
+        subject_name: form.subject,
+        description: form.goal,
+        deadline: deadlineStr,
+        daily_minutes: Math.round(form.hours_per_day * 60)
+      };
+
+      await api.post('/api/study-plans/generate', payload);
       setForm({ subject: '', goal: '', duration_weeks: 4, hours_per_day: 2 });
       setShowForm(false);
       load();
@@ -100,6 +112,16 @@ export default function StudyPlansPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {plans.map((plan) => {
             const id = plan._id || plan.id;
+            // Calculate weeks between created_at and deadline dynamically
+            let durationWeeks = plan.duration_weeks;
+            if (!durationWeeks && plan.deadline && plan.created_at) {
+              const diffMs = new Date(plan.deadline) - new Date(plan.created_at);
+              durationWeeks = Math.ceil(diffMs / (1000 * 60 * 60 * 24 * 7));
+            }
+            durationWeeks = durationWeeks || 4;
+
+            const hoursPerDay = plan.daily_minutes ? (plan.daily_minutes / 60).toFixed(1) : (plan.hours_per_day || 2);
+
             return (
               <div key={id} className="card" style={{ position: 'relative' }}>
                 <button onClick={() => handleDelete(id)}
@@ -107,17 +129,28 @@ export default function StudyPlansPage() {
                 <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start', marginBottom: '12px', paddingRight: '32px' }}>
                   <div style={{ fontSize: '1.8rem' }}>📅</div>
                   <div>
-                    <h3 style={{ fontSize: '1rem', marginBottom: '4px' }}>{plan.subject}</h3>
+                    <h3 style={{ fontSize: '1rem', marginBottom: '4px' }}>{plan.subject_name || plan.subject}</h3>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <span className="badge badge-purple">{plan.duration_weeks || 4} weeks</span>
-                      <span className="badge badge-blue">{plan.hours_per_day || 2}h/day</span>
+                      <span className="badge badge-purple">{durationWeeks} weeks</span>
+                      <span className="badge badge-blue">{hoursPerDay}h/day</span>
                     </div>
                   </div>
                 </div>
-                {plan.goal && <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '10px' }}><strong>Goal:</strong> {plan.goal}</p>}
-                {plan.plan_content && (
-                  <div style={{ background: 'var(--bg-input)', borderRadius: 8, padding: '12px', fontSize: '0.83rem', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', maxHeight: '200px', overflowY: 'auto' }}>
-                    {plan.plan_content}
+                {(plan.description || plan.goal) && (
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '10px' }}>
+                    <strong>Goal:</strong> {plan.description || plan.goal}
+                  </p>
+                )}
+                {/* Render topics schedule list since the backend generates topics */}
+                {plan.topics && plan.topics.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', background: 'var(--bg-input)', borderRadius: 8, padding: '12px', maxHeight: '200px', overflowY: 'auto' }}>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: '4px' }}>Study Schedule Topics</div>
+                    {plan.topics.map((t, idx) => (
+                      <div key={idx} style={{ fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between', color: t.completed ? 'var(--text-muted)' : 'var(--text-secondary)' }}>
+                        <span style={{ textDecoration: t.completed ? 'line-through' : 'none' }}>Day {t.day}: {t.name}</span>
+                        <span>{t.duration} mins</span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
