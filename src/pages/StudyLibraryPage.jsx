@@ -4,6 +4,7 @@
  * Triggers study timer automatically when viewing documents.
  */
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../utils/api';
 import { useStudyTimer } from '../context/StudyTimerContext';
 
