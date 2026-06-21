@@ -92,11 +92,26 @@ async def submit_quiz(request: QuizSubmitRequest):
             {"$push": {"attempts": attempt}},
         )
 
+        # Recalculate progress or completion of the subject
+        subject_name = quiz.get("subject", "General")
+        user_id = quiz.get("user_id", "anonymous")
+        percentage = round((score / total) * 100, 1) if total > 0 else 0
+
+        # Update subject completion status
+        is_completed = percentage >= 80.0
+        needs_retest = percentage < 80.0
+
+        from app.database import subjects_collection
+        await subjects_collection.update_one(
+            {"user_id": user_id, "name": subject_name},
+            {"$set": {"completed": is_completed, "needs_retest": needs_retest}}
+        )
+
         return {
             "status": "success",
             "score": score,
             "total": total,
-            "percentage": round((score / total) * 100, 1) if total > 0 else 0,
+            "percentage": percentage,
             "results": results,
         }
     except HTTPException:

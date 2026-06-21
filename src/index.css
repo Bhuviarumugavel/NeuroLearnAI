@@ -298,3 +298,127 @@ tr:hover td { background: var(--bg-card); }
   .stats-grid { grid-template-columns: 1fr; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
 }
+
+/* ── Smart Study Timer Overlay ────────────────────────── */
+.timer-overlay {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 999;
+}
+.timer-overlay-card {
+  background: rgba(22, 22, 42, 0.85);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5), var(--shadow-glow);
+}
+.timer-pulse-container {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.timer-pulse-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--accent-green);
+  border-radius: 50%;
+  z-index: 2;
+}
+.timer-pulse-ring {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--accent-green);
+  border-radius: 50%;
+  animation: pulse-ring 1.5s cubic-bezier(0.215, 0.610, 0.355, 1) infinite;
+  z-index: 1;
+}
+@keyframes pulse-ring {
+  0% { transform: scale(0.5); opacity: 1; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+.timer-overlay-info {
+  display: flex;
+  flex-direction: column;
+}
+.timer-overlay-title {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.timer-overlay-duration {
+  font-family: 'Outfit', sans-serif;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.timer-overlay-btn {
+  font-size: 0.75rem;
+  padding: 6px 12px;
+}
+
+/* ── Calendar Page ─────────────────────────────────────── */
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  border-left: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--border-subtle);
+}
+.calendar-day-header {
+  background: var(--bg-surface);
+  text-align: center;
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  padding: 10px;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.calendar-day {
+  min-height: 100px;
+  padding: 8px;
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+  position: relative;
+  background: var(--bg-base);
+  transition: var(--transition);
+}
+.calendar-day:hover {
+  background: var(--bg-card-hover);
+}
+.calendar-day.different-month {
+  opacity: 0.3;
+}
+.calendar-day.today {
+  background: rgba(124, 58, 237, 0.05);
+}
+.calendar-day-number {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+.calendar-day.today .calendar-day-number {
+  color: var(--accent-light);
+}
+.calendar-event {
+  font-size: 0.7rem;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  margin-top: 4px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  font-weight: 600;
+}

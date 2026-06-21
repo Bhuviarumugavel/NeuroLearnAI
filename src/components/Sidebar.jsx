@@ -5,12 +5,14 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 const NAV_ITEMS = [
-  { path: '/dashboard',    label: 'Dashboard',    icon: '🏠' },
-  { path: '/notes',        label: 'Notes',        icon: '📝' },
-  { path: '/subjects',     label: 'Subjects',     icon: '📚' },
-  { path: '/quiz',         label: 'Quiz',         icon: '🧩' },
-  { path: '/study-plans',  label: 'Study Plans',  icon: '📅' },
-  { path: '/reminders',    label: 'Reminders',    icon: '🔔' },
+  { path: '/dashboard',     label: 'Home',                  icon: '🏠' },
+  { path: '/summarizer',    label: 'AI Summarizer',          icon: '📝' },
+  { path: '/quiz',          label: 'Quiz Center',           icon: '🧩' },
+  { path: '/calendar',      label: 'Calendar',              icon: '📅' },
+  { path: '/subjects',      label: 'Subject Settings',      icon: '⚙️' },
+  { path: '/library',       label: 'Study Library',          icon: '📚' },
+  { path: '/notifications', label: 'Notification Settings', icon: '🔔' },
+  { path: '/profile',       label: 'Profile',               icon: '👤' },
 ];
 
 const AUTOMATION_ITEMS = [
@@ -68,7 +70,7 @@ export default function Sidebar({ onNavigate }) {
 
       {/* User footer */}
       <div className="sidebar-footer">
-        <div className="user-chip">
+        <Link to="/profile" className="user-chip" style={{ textDecoration: 'none', cursor: 'pointer' }} onClick={onNavigate}>
           <div className="avatar">
             {user?.avatar_url
               ? <img src={user.avatar_url} alt="avatar" className="avatar" style={{ width: 36, height: 36 }} />
@@ -79,7 +81,7 @@ export default function Sidebar({ onNavigate }) {
             <div className="user-name">{user?.full_name || 'Student'}</div>
             <div className="user-email">{user?.email}</div>
           </div>
-        </div>
+        </Link>
         <button
           id="sidebar-logout"
           className="btn btn-ghost btn-sm btn-full"

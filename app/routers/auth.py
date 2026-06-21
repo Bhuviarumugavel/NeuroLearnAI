@@ -150,6 +150,12 @@ async def update_profile(
         update_data["study_preferences.preferred_subjects"] = updates.preferred_subjects
     if updates.notification_enabled is not None:
         update_data["study_preferences.notification_enabled"] = updates.notification_enabled
+    if updates.education_status is not None:
+        update_data["study_preferences.education_status"] = updates.education_status
+    if updates.availability is not None:
+        update_data["study_preferences.availability"] = updates.availability
+    if updates.average_focus_time is not None:
+        update_data["study_preferences.average_focus_time"] = updates.average_focus_time
 
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")

@@ -199,3 +199,23 @@ async def delete_topic(subject_id: str, topic_id: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── POST /api/subjects/{subject_id}/track-time ──────────
+
+@router.post("/{subject_id}/track-time")
+async def track_study_time(subject_id: str, payload: dict):
+    """Increment total study time for a subject."""
+    seconds = payload.get("seconds", 0)
+    try:
+        result = await subjects_collection.update_one(
+            {"_id": ObjectId(subject_id)},
+            {"$inc": {"study_time_seconds": seconds}}
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Subject not found")
+        return {"status": "success", "incremented": seconds}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

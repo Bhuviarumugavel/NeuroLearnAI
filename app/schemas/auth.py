@@ -22,6 +22,9 @@ class ProfileUpdate(BaseModel):
     daily_goal_minutes: Optional[int] = None
     preferred_subjects: Optional[List[str]] = None
     notification_enabled: Optional[bool] = None
+    education_status: Optional[str] = None
+    availability: Optional[str] = None
+    average_focus_time: Optional[int] = None
 
 
 # ── Responses ─────────────────────────────────────────────
