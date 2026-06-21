@@ -27,6 +27,7 @@ export default function SubjectsPage() {
   const [generatingAi, setGeneratingAi] = useState(false);
   const [manualText, setManualText] = useState('');
   const [manualTitle, setManualTitle] = useState('');
+  const [manualFile, setManualFile] = useState(null);
   const [uploadingManual, setUploadingManual] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -212,24 +213,57 @@ export default function SubjectsPage() {
     }
   };
 
+  const handleManualFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const validExtensions = ['.txt', '.md', '.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp'];
+      const fileExt = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+      const isValid = validExtensions.includes(fileExt) || file.type.startsWith('image/') || file.type === 'application/pdf';
+      if (!isValid) {
+        setError("Unsupported file format. Please upload text (.txt, .md), PDF (.pdf), Word (.docx) or Image files.");
+        setManualFile(null);
+        return;
+      }
+      setError('');
+      setManualFile(file);
+      setManualText(`[Selected file: ${file.name} - Click Upload to parse and summarize]`);
+    }
+  };
+
   const handleManualNotesUpload = async (e) => {
     e.preventDefault();
     const activeSub = subjects.find(s => (s._id || s.id) === selectedSubId);
-    if (!activeSub || !manualText.trim()) return;
+    if (!activeSub) return;
+
+    if (!manualFile && !manualText.trim()) {
+      setError('Please paste study content or choose a file to upload.');
+      return;
+    }
 
     setUploadingManual(true);
     setError('');
     setSuccessMsg('');
     try {
-      await api.post('/api/notes', {
-        text: manualText,
-        subject_tag: activeSub.name
-      });
+      if (manualFile) {
+        const formData = new FormData();
+        formData.append('file', manualFile);
+        formData.append('subject_tag', activeSub.name);
+        
+        await api.post('/api/notes/upload-file', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+      } else {
+        await api.post('/api/notes', {
+          text: manualText,
+          subject_tag: activeSub.name
+        });
+      }
       setSuccessMsg('Study notes uploaded and summarized successfully!');
       setManualText('');
       setManualTitle('');
+      setManualFile(null);
     } catch (err) {
-      setError('Notes upload failed.');
+      setError(err.response?.data?.detail || 'Notes upload failed.');
     } finally {
       setUploadingManual(false);
     }
@@ -559,7 +593,18 @@ export default function SubjectsPage() {
                     />
                   </div>
                   <div className="form-group">
-                    <label className="form-label" htmlFor="manual-note-content">Note Content *</label>
+                    <label className="form-label" htmlFor="manual-note-file">Or Upload Notes File (Text, PDF, DOCX, Image)</label>
+                    <input 
+                      id="manual-note-file" 
+                      type="file" 
+                      className="form-input" 
+                      accept=".txt,.md,.pdf,.docx,image/*"
+                      onChange={handleManualFileChange} 
+                    />
+                    {manualFile && <span className="badge badge-green mt-8" style={{ display: 'inline-block' }}>✓ File selected: {manualFile.name}</span>}
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="manual-note-content">Or Paste Note Content *</label>
                     <textarea 
                       id="manual-note-content"
                       className="form-input"
@@ -567,14 +612,14 @@ export default function SubjectsPage() {
                       rows={8}
                       value={manualText}
                       onChange={(e) => setManualText(e.target.value)}
-                      required
+                      required={!manualFile}
                     />
                   </div>
                   <button 
                     type="submit" 
                     id="manual-upload-btn"
                     className={`btn btn-primary ${uploadingManual ? 'btn-loading' : ''}`} 
-                    disabled={uploadingManual || !manualText.trim()}
+                    disabled={uploadingManual || (!manualFile && !manualText.trim())}
                   >
                     {uploadingManual ? 'Uploading Study Notes...' : '💾 Upload Study Notes'}
                   </button>
