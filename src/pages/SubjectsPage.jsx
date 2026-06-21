@@ -16,7 +16,7 @@ export default function SubjectsPage() {
   const [selectedSubId, setSelectedSubId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', description: '', color: COLORS[0], priority: 'Medium', deadline: '', daily_study_minutes: 45 });
-  const [newSubFileText, setNewSubFileText] = useState('');
+  const [newSubFile, setNewSubFile] = useState(null);
   const [saving, setSaving] = useState(false);
 
   // Detail panel tabs: 'config' | 'ai' | 'manual'
@@ -59,17 +59,16 @@ export default function SubjectsPage() {
   const handleNewSubFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      const isText = file.type === "text/plain" || file.name.endsWith('.txt') || file.name.endsWith('.md');
-      if (!isText) {
-        setError("Note: Live parsing is currently supported for plain text (.txt, .md) files. For other formats, please paste the text content.");
+      const validExtensions = ['.txt', '.md', '.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp'];
+      const fileExt = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+      const isValid = validExtensions.includes(fileExt) || file.type.startsWith('image/') || file.type === 'application/pdf';
+      if (!isValid) {
+        setError("Unsupported file format. Please upload text (.txt, .md), PDF (.pdf), Word (.docx) or Image files.");
+        setNewSubFile(null);
         return;
       }
       setError('');
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setNewSubFileText(event.target.result);
-      };
-      reader.readAsText(file);
+      setNewSubFile(file);
     }
   };
 
@@ -78,7 +77,7 @@ export default function SubjectsPage() {
     if (!form.name.trim()) return;
 
     const hasDescription = form.description && form.description.trim().length > 0;
-    const hasFile = newSubFileText && newSubFileText.trim().length > 0;
+    const hasFile = !!newSubFile;
     if (!hasDescription && !hasFile) {
       setError('Please provide a notes description/syllabus OR upload a notes file (at least one is mandatory).');
       return;
@@ -96,18 +95,25 @@ export default function SubjectsPage() {
         deadline: form.deadline || null,
         daily_study_minutes: Number(form.daily_study_minutes)
       });
-      
-      const notesContent = newSubFileText.trim() || form.description.trim();
-      if (notesContent) {
-        await api.post('/api/notes', {
-          text: notesContent,
-          subject_tag: form.name
+
+      let notesContent = form.description ? form.description.trim() : '';
+
+      if (newSubFile) {
+        const formData = new FormData();
+        formData.append('file', newSubFile);
+        formData.append('subject_tag', form.name);
+        
+        const uploadRes = await api.post('/api/notes/upload-file', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
         });
+        
+        // Use parsed content if description wasn't provided, or for generation base
+        notesContent = uploadRes.data.original_text || uploadRes.data.summary || notesContent;
       }
 
       // Automatically generate a study plan & AI summary notes in the background
       const planDeadline = form.deadline || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const planDesc = notesContent || form.description || `Learning schedule for ${form.name}`;
+      const planDesc = notesContent || `Learning schedule for ${form.name}`;
 
       await Promise.all([
         api.post('/api/study-plans/generate', {
@@ -124,7 +130,7 @@ export default function SubjectsPage() {
       ]);
 
       setForm({ name: '', description: '', color: COLORS[0], priority: 'Medium', deadline: '', daily_study_minutes: 45 });
-      setNewSubFileText('');
+      setNewSubFile(null);
       setShowForm(false);
       
       // Select the newly created subject
@@ -135,11 +141,12 @@ export default function SubjectsPage() {
       await loadSubjects();
       setSuccessMsg('Subject created successfully, and study plan + notes generated!');
     } catch (err) {
-      setError('Failed to create subject or upload notes.');
+      setError(err.response?.data?.detail || 'Failed to create subject or upload notes.');
     } finally {
       setSaving(false);
     }
   };
+
 
   const handleUpdateSubject = async (e) => {
     e.preventDefault();
@@ -279,16 +286,16 @@ export default function SubjectsPage() {
                     rows={4}
                   />
                 </div>
-                <div className="form-group">
-                  <label className="form-label" htmlFor="new-sub-file">Or Upload Notes File (.txt, .md)</label>
+                 <div className="form-group">
+                  <label className="form-label" htmlFor="new-sub-file">Or Upload Notes File (Text, PDF, DOCX, Image)</label>
                   <input 
                     id="new-sub-file" 
                     type="file" 
                     className="form-input" 
-                    accept=".txt,.md"
+                    accept=".txt,.md,.pdf,.docx,image/*"
                     onChange={handleNewSubFileChange} 
                   />
-                  {newSubFileText && <span className="badge badge-green mt-8" style={{ display: 'inline-block' }}>✓ File parsed successfully ({newSubFileText.length} chars)</span>}
+                  {newSubFile && <span className="badge badge-green mt-8" style={{ display: 'inline-block' }}>✓ File selected: {newSubFile.name}</span>}
                 </div>
                 <div className="form-group">
                   <label className="form-label" htmlFor="new-sub-priority">Priority Level</label>

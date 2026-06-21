@@ -75,6 +75,36 @@ def summarize_notes(raw_text: str) -> str:
         return f"Offline Mock Summary for: {raw_text[:30]}...\n- Key Concept 1\n- Key Concept 2"
 
 
+def summarize_image(base64_image: str, mime_type: str) -> str:
+    """Multimodal Image -> Bullets / Flashcards / Study Guide / Practice Quiz"""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Extract all study notes, definitions, explanations, formulas, diagrams and text from this image and structure them into a comprehensive, clear, bulleted study guide."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime_type};base64,{base64_image}"
+                            }
+                        }
+                    ]
+                }
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        # Offline mock fallback
+        return f"Offline Mock Summary for Image (Could not connect to multimodal AI): {str(e)}"
+
+
+
 # ─────────────────────────────────────────────────────────
 # 2. Quiz Generation
 # ─────────────────────────────────────────────────────────

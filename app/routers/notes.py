@@ -1,11 +1,11 @@
 """Notes router — full CRUD with AI summarization."""
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, UploadFile, File, Form
 from datetime import datetime, timezone
 from bson import ObjectId
 from app.database import notes_collection
 from app.models.note import create_note_document
 from app.schemas.note import NoteCreate, NoteUpdate, AutoNotesRequest
-from app.ai_engine import summarize_notes, generate_automatic_notes
+from app.ai_engine import summarize_notes, generate_automatic_notes, summarize_image
 from app.middleware.auth import get_current_user, get_current_user_optional
 
 router = APIRouter(prefix="/api/notes", tags=["Notes"])
@@ -190,3 +190,120 @@ async def auto_generate_notes(
         pass  # Graceful degradation
 
     return {"status": "success", "notes": notes}
+
+
+# ── POST /api/notes/upload-file ──────────────────────────
+
+@router.post("/upload-file")
+async def upload_file_notes(
+    file: UploadFile = File(...),
+    subject_tag: str = Form(...),
+    user: dict = Depends(get_current_user_optional),
+):
+    """Upload a TXT, PDF, DOCX, or Image file to extract text & generate AI summary."""
+    user_id = user["_id"] if user else "anonymous"
+    filename = file.filename.lower()
+    content_type = file.content_type.lower() if file.content_type else ""
+
+    # Read file bytes
+    try:
+        file_bytes = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
+
+    text = ""
+    summary = ""
+
+    # Check file type and parse
+    if filename.endswith(('.txt', '.md')) or content_type.startswith("text/"):
+        try:
+            text = file_bytes.decode("utf-8", errors="ignore")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to decode text file: {str(e)}")
+
+    elif filename.endswith('.pdf') or content_type == "application/pdf":
+        try:
+            import pypdf
+            import io
+            reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+            pages_text = []
+            for page in reader.pages:
+                p_text = page.extract_text()
+                if p_text:
+                    pages_text.append(p_text)
+            text = "\n".join(pages_text)
+            if not text.strip():
+                raise Exception("No readable text found in PDF.")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to parse PDF file: {str(e)}")
+
+    elif filename.endswith('.docx') or content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+        try:
+            import zipfile
+            import xml.etree.ElementTree as ET
+            import io
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as docx:
+                xml_content = docx.read('word/document.xml')
+                root = ET.fromstring(xml_content)
+                ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                paragraphs = []
+                for p in root.findall('.//w:p', ns):
+                    texts = [t.text for t in p.findall('.//w:t', ns) if t.text]
+                    if texts:
+                        paragraphs.append("".join(texts))
+                text = "\n".join(paragraphs)
+            if not text.strip():
+                raise Exception("No readable text found in DOCX.")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to parse DOCX file: {str(e)}")
+
+    elif filename.endswith(('.png', '.jpg', '.jpeg', '.webp')) or content_type.startswith("image/"):
+        try:
+            import base64
+            # Determine appropriate mime type if not present or generic
+            mime = content_type if content_type.startswith("image/") else "image/png"
+            base64_data = base64.b64encode(file_bytes).decode('utf-8')
+            summary = summarize_image(base64_data, mime)
+            text = "Uploaded image notes (Summarized directly via multimodal AI)"
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to process image: {str(e)}")
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file format. Please upload text (.txt, .md), PDF (.pdf), Word (.docx) or Image files."
+        )
+
+    # If it's a textual file, generate the summary using summarize_notes
+    if not summary:
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="The uploaded file contains no readable text.")
+        summary = summarize_notes(text)
+
+    # Build document & persist to MongoDB
+    note_doc = create_note_document(
+        user_id=user_id,
+        subject_tag=subject_tag,
+        original_text=text,
+        summary=summary,
+        note_type="manual",
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    note_doc["created_at"] = now
+    note_doc["updated_at"] = now
+
+    try:
+        result = await notes_collection.insert_one(note_doc)
+        return {
+            "status": "success",
+            "note_id": str(result.inserted_id),
+            "original_text": text,
+            "summary": summary,
+        }
+    except Exception as e:
+        return {
+            "status": "offline_success",
+            "original_text": text,
+            "summary": summary,
+            "error": str(e),
+        }

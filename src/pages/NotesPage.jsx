@@ -15,6 +15,7 @@ export default function NotesPage() {
   const [subjects, setSubjects] = useState([]);
   const [selectedSubject, setSelectedSubject] = useState('');
   const [form, setForm] = useState({ text: '', tags: '' });
+  const [formFile, setFormFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successData, setSuccessData] = useState(null);
@@ -73,17 +74,19 @@ export default function NotesPage() {
 
   const parseFile = (file) => {
     if (!file) return;
-    const isText = file.type === "text/plain" || file.name.endsWith('.txt') || file.name.endsWith('.md');
-    if (!isText) {
-      setError("Note: Live parsing is currently supported for plain text (.txt, .md) files. For other formats, paste the text content.");
+    const validExtensions = ['.txt', '.md', '.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp'];
+    const fileExt = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+    const isValid = validExtensions.includes(fileExt) || file.type.startsWith('image/') || file.type === 'application/pdf';
+    
+    if (!isValid) {
+      setError("Unsupported file format. Please upload text (.txt, .md), PDF (.pdf), Word (.docx) or Image files.");
+      setFormFile(null);
       return;
     }
+    
     setError('');
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setForm(f => ({ ...f, text: e.target.result }));
-    };
-    reader.readAsText(file);
+    setFormFile(file);
+    setForm(f => ({ ...f, text: `[Selected file: ${file.name} - Will be parsed and summarized on submit]` }));
   };
 
   const handleDrop = (e) => {
@@ -103,12 +106,15 @@ export default function NotesPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.text.trim()) {
-      setError('Please paste study content or drop a file to summarize.');
+    const activeSub = subjects.find(s => (s._id || s.id) === selectedSubject);
+    if (!activeSub) {
+      setError('Please add a subject in Subject Settings first.');
       return;
     }
-    if (!selectedSubject) {
-      setError('Please add a subject in Subject Settings first.');
+    const subjectTag = activeSub.name;
+
+    if (!formFile && !form.text.trim()) {
+      setError('Please paste study content or drop a file to summarize.');
       return;
     }
 
@@ -116,14 +122,22 @@ export default function NotesPage() {
     setError('');
     setSuccessData(null);
 
-    const activeSub = subjects.find(s => (s._id || s.id) === selectedSubject);
-    const subjectTag = activeSub ? activeSub.name : 'General';
-
     try {
-      const res = await api.post('/api/notes', {
-        text: form.text,
-        subject_tag: subjectTag
-      });
+      let res;
+      if (formFile) {
+        const formData = new FormData();
+        formData.append('file', formFile);
+        formData.append('subject_tag', subjectTag);
+        
+        res = await api.post('/api/notes/upload-file', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        });
+      } else {
+        res = await api.post('/api/notes', {
+          text: form.text,
+          subject_tag: subjectTag
+        });
+      }
 
       setSuccessData({
         summary: res.data.summary,
@@ -133,6 +147,7 @@ export default function NotesPage() {
 
       // Clear input form
       setForm({ text: '', tags: '' });
+      setFormFile(null);
       
       // Auto-stop timer session
       stopSession();
@@ -145,6 +160,7 @@ export default function NotesPage() {
       setLoading(false);
     }
   };
+
 
   const handleDeleteNote = async (id, e) => {
     e.stopPropagation();
@@ -217,7 +233,7 @@ export default function NotesPage() {
 
                 {/* File Upload zone */}
                 <div className="form-group">
-                  <label className="form-label">Upload Text File (.txt, .md)</label>
+                  <label className="form-label">Upload Notes File (Text, PDF, DOCX, Image)</label>
                   <div 
                     className={`flex-col flex-center ${dragActive ? 'drag-active' : ''}`}
                     onDragEnter={handleDrag}
@@ -236,11 +252,13 @@ export default function NotesPage() {
                     onClick={() => document.getElementById('file-upload-input').click()}
                   >
                     <div style={{ fontSize: '1.8rem', marginBottom: '4px' }}>📁</div>
-                    <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>Drag & Drop or Click to Upload</div>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                      {formFile ? `Selected: ${formFile.name}` : 'Drag & Drop or Click to Upload'}
+                    </div>
                     <input 
                       id="file-upload-input" 
                       type="file" 
-                      accept=".txt,.md"
+                      accept=".txt,.md,.pdf,.docx,image/*"
                       onChange={handleFileChange} 
                       style={{ display: 'none' }} 
                     />
