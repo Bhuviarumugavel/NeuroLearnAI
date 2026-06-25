@@ -1,27 +1,28 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
 
 const BOTTOM_NAV_ITEMS = [
-  { path: '/dashboard',     label: 'Progress',  icon: '🏠' },
-  { path: '/summarizer',    label: 'Summarizer',icon: '📝' },
-  { path: '/quiz',          label: 'Quiz',      icon: '🧩' },
-  { path: '/calendar',      label: 'Calendar',  icon: '📅' },
-  { path: '/library',       label: 'Library',   icon: '📚' },
+  { path: '/dashboard',     label: 'Home',        icon: '🏠' },
+  { path: '/summarizer',    label: 'Summarizer',  icon: '📝' },
+  { path: '/quiz',          label: 'Quiz',        icon: '🧩' },
+  { path: '/subjects',      label: 'Subjects',    icon: '⚙️' },
 ];
 
 export default function DashboardLayout() {
   const location = useLocation();
   const { reminders } = useData();
+  const { logout } = useAuth();
 
   const [activeToast, setActiveToast] = useState(null);
   const [notifiedIds, setNotifiedIds] = useState(new Set());
+  const [showSettings, setShowSettings] = useState(false);
 
   // Background reminder notification listener
   useEffect(() => {
     const checkReminders = () => {
       const now = new Date();
-      // Find a reminder where target time is past, and we haven't notified in this session yet
       const fired = reminders.find(r => {
         const id = r._id || r.id;
         const date = new Date(r.remind_at);
@@ -32,7 +33,6 @@ export default function DashboardLayout() {
         const id = fired._id || fired.id;
         setNotifiedIds(prev => new Set([...prev, id]));
         setActiveToast(fired.message);
-        // Clear toast after 4 seconds
         setTimeout(() => setActiveToast(null), 4000);
       }
     };
@@ -47,6 +47,82 @@ export default function DashboardLayout() {
     <div className="app-layout">
       {/* Mobile-style Container Mockup */}
       <div className="mobile-shell">
+        
+        {/* Dropdown Overlay Backdrop */}
+        {showSettings && (
+          <div 
+            onClick={() => setShowSettings(false)}
+            style={{ position: 'absolute', inset: 0, zIndex: 1999, background: 'rgba(0,0,0,0.2)' }}
+          />
+        )}
+
+        {/* Top-Right Settings Dropdown Menu */}
+        {showSettings && (
+          <div 
+            className="animate-slide-up"
+            style={{
+              position: 'absolute',
+              top: '56px',
+              right: '12px',
+              width: '180px',
+              background: 'rgba(22, 22, 42, 0.96)',
+              backdropFilter: 'blur(16px)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-md)',
+              boxShadow: '0 12px 32px rgba(0,0,0,0.6)',
+              zIndex: 2000,
+              padding: '6px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '4px'
+            }}
+          >
+            <Link 
+              to="/calendar" 
+              onClick={() => setShowSettings(false)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none', fontSize: '0.8rem', fontWeight: 600, borderRadius: 'var(--radius-sm)' }}
+            >
+              📅 Calendar
+            </Link>
+            <Link 
+              to="/library" 
+              onClick={() => setShowSettings(false)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none', fontSize: '0.8rem', fontWeight: 600, borderRadius: 'var(--radius-sm)' }}
+            >
+              📚 Study Library
+            </Link>
+            <Link 
+              to="/profile" 
+              onClick={() => setShowSettings(false)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none', fontSize: '0.8rem', fontWeight: 600, borderRadius: 'var(--radius-sm)' }}
+            >
+              👤 Profile Settings
+            </Link>
+            <Link 
+              to="/notifications" 
+              onClick={() => setShowSettings(false)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none', fontSize: '0.8rem', fontWeight: 600, borderRadius: 'var(--radius-sm)' }}
+            >
+              🔔 Study Alerts
+            </Link>
+            <Link 
+              to="/subjects" 
+              onClick={() => setShowSettings(false)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none', fontSize: '0.8rem', fontWeight: 600, borderRadius: 'var(--radius-sm)' }}
+            >
+              ⚙️ Subject Config
+            </Link>
+            
+            <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '4px 0' }} />
+            
+            <button 
+              onClick={() => { setShowSettings(false); logout(); }}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', color: 'var(--accent-red)', background: 'none', border: 'none', width: '100%', textAlign: 'left', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600, borderRadius: 'var(--radius-sm)' }}
+            >
+              🚪 Sign Out
+            </button>
+          </div>
+        )}
         
         {/* Animated Toast Alert overlay */}
         {activeToast && (
@@ -87,15 +163,15 @@ export default function DashboardLayout() {
           </Link>
           
           <div className="app-header-actions">
-            <Link to="/subjects" className="header-action-btn" title="Subject Settings" id="nav-subject-settings">
+            <button 
+              onClick={() => setShowSettings(prev => !prev)} 
+              className="header-action-btn" 
+              title="Settings & Menu"
+              id="menu-settings-btn"
+              style={{ fontSize: '1.4rem' }}
+            >
               ⚙️
-            </Link>
-            <Link to="/notifications" className="header-action-btn" title="Notifications" id="nav-notifications">
-              🔔
-            </Link>
-            <Link to="/profile" className="header-action-btn" title="Profile" id="nav-profile">
-              👤
-            </Link>
+            </button>
           </div>
         </header>
 
