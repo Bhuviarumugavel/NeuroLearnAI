@@ -25,6 +25,8 @@ celery_app.conf.update(
     enable_utc=True,
     task_track_started=True,
     task_acks_late=True,
+    broker_connection_max_retries=1,
+    broker_transport_options={"max_retries": 1},
 )
 
 

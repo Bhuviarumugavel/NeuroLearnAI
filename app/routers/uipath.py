@@ -206,6 +206,7 @@ async def list_robots():
 
 # ── Health Check ─────────────────────────────────────────────
 
+@router.get("/status")
 @router.get("/health")
 async def uipath_health():
     """Test the connection to UiPath Orchestrator."""
