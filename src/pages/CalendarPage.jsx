@@ -1,27 +1,49 @@
 /**
- * CalendarPage.jsx — Interactive Calendar Page
- * Displays exam dates, deadlines, study sessions, and day-wise topic progress organized subject-wise.
+ * CalendarPage.jsx — Interactive Calendar Page.
+ * Displays exam dates, study schedule topics, and custom study alerts.
+ * Supports adding custom events or rescheduling subject deadlines by clicking dates.
  */
 import { useState, useEffect } from 'react';
 import api from '../utils/api';
+import { useData } from '../context/DataContext';
 
 export default function CalendarPage() {
+  const { refreshSubjects, refreshReminders } = useData();
+
   const [subjects, setSubjects] = useState([]);
   const [reminders, setReminders] = useState([]);
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 5, 21)); // Anchor to June 2026 (matching conversation timeline)
+  // June 2026 anchor (matches conversation/project timeline)
+  const [currentDate, setCurrentDate] = useState(new Date(2026, 5, 21)); 
+
+  // Modal Interactive States
+  const [clickedDateStr, setClickedDateStr] = useState(null); // 'YYYY-MM-DD'
+  const [showModal, setShowModal] = useState(false);
+  const [modalTab, setModalTab] = useState('event'); // 'event' | 'deadline'
+  
+  // Form Inputs
+  const [eventMessage, setEventMessage] = useState('');
+  const [targetSubjectId, setTargetSubjectId] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [modalError, setModalError] = useState('');
 
   const loadCalendarData = () => {
+    setLoading(true);
     Promise.all([
       api.get('/api/subjects'),
       api.get('/api/reminders'),
       api.get('/api/study-plans')
     ]).then(([subsRes, remsRes, plansRes]) => {
-      setSubjects(subsRes.data.subjects || []);
+      const subs = subsRes.data.subjects || [];
+      setSubjects(subs);
       setReminders(remsRes.data.reminders || []);
       setPlans(plansRes.data.plans || []);
+      
+      if (subs.length > 0 && !targetSubjectId) {
+        setTargetSubjectId(subs[0]._id || subs[0].id);
+      }
     }).catch(err => {
       console.error(err);
     }).finally(() => {
@@ -55,19 +77,75 @@ export default function CalendarPage() {
         completed: !currentCompleted
       });
       
-      // Sync subject progress
       loadCalendarData();
     } catch (err) {
       console.error("Failed to update topic progress", err);
-      // Reload plans on failure
-      api.get('/api/study-plans').then(r => setPlans(r.data.plans || []));
+    }
+  };
+
+  const handleCellClick = (dateStr) => {
+    setClickedDateStr(dateStr);
+    setModalError('');
+    setEventMessage('');
+    setShowModal(true);
+  };
+
+  const handleAddCustomEvent = async (e) => {
+    e.preventDefault();
+    if (!eventMessage.trim()) return;
+
+    setSubmitting(true);
+    setModalError('');
+    try {
+      // Create a reminder at noon on the clicked date
+      const remindAt = new Date(`${clickedDateStr}T12:00:00`).toISOString();
+      await api.post('/api/reminders/trigger', {
+        message: eventMessage,
+        remind_at: remindAt
+      });
+      
+      // Update calendar & context
+      loadCalendarData();
+      await refreshReminders();
+      setShowModal(false);
+      setEventMessage('');
+    } catch (err) {
+      setModalError('Failed to save calendar event.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleChangeSubjectDeadline = async (e) => {
+    e.preventDefault();
+    if (!targetSubjectId) return;
+
+    const matchedSub = subjects.find(s => (s._id || s.id) === targetSubjectId);
+    if (!matchedSub) return;
+
+    setSubmitting(true);
+    setModalError('');
+    try {
+      await api.put(`/api/subjects/${targetSubjectId}`, {
+        name: matchedSub.name,
+        deadline: clickedDateStr // set new deadline YYYY-MM-DD
+      });
+
+      // Update calendar & context
+      loadCalendarData();
+      await refreshSubjects();
+      setShowModal(false);
+    } catch (err) {
+      setModalError('Failed to update subject exam date.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
 
-  // Calendar calculations
+  // Calendar math
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDayIndex = new Date(year, month, 1).getDay();
   
@@ -76,25 +154,16 @@ export default function CalendarPage() {
     "July", "August", "September", "October", "November", "December"
   ];
 
-  const handlePrevMonth = () => {
-    setCurrentDate(new Date(year, month - 1, 1));
-  };
-
-  const handleNextMonth = () => {
-    setCurrentDate(new Date(year, month + 1, 1));
-  };
-
-  // Helper to parse day-wise topic dates
   const getTopicDateStr = (planCreatedAt, topicDay) => {
     const start = new Date(planCreatedAt);
     start.setDate(start.getDate() + (topicDay - 1));
     return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
   };
 
-  // Generate date cells
+  // Generate date grid cells
   const cells = [];
   
-  // Empty slots for previous month offset
+  // Offset slots for previous month
   for (let i = 0; i < firstDayIndex; i++) {
     cells.push({ day: null, key: `prev-${i}`, classNames: 'calendar-day different-month' });
   }
@@ -105,13 +174,13 @@ export default function CalendarPage() {
     const isToday = today.getDate() === day && today.getMonth() === month && today.getFullYear() === year;
     const formattedDateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     
-    // Subjects matching deadline
+    // Exam dates matching deadline
     const dayDeadlines = subjects.filter(s => s.deadline && s.deadline.startsWith(formattedDateStr));
 
-    // Reminders matching remind_at
+    // Custom alerts matching remind_at
     const dayReminders = reminders.filter(r => r.remind_at && r.remind_at.startsWith(formattedDateStr));
 
-    // Topics matching day-wise plan schedule
+    // Plan topics matching schedule
     const dayTopics = [];
     plans.forEach(plan => {
       plan.topics?.forEach((topic, idx) => {
@@ -129,6 +198,7 @@ export default function CalendarPage() {
 
     cells.push({
       day,
+      dateStr: formattedDateStr,
       key: `active-${day}`,
       classNames: `calendar-day ${isToday ? 'today' : ''}`,
       deadlines: dayDeadlines,
@@ -142,157 +212,95 @@ export default function CalendarPage() {
   return (
     <div className="page-container animate-slide-up">
       {/* Header */}
-      <div className="page-header flex-between">
-        <div>
-          <h1 className="page-title">📅 Study Calendar</h1>
-          <p className="page-subtitle">Track academic schedules, topic milestones, exams, and study targets</p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h1 className="page-title" style={{ fontSize: '1.4rem' }}>📅 Study Calendar</h1>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <button className="btn btn-outline btn-sm" onClick={() => setCurrentDate(new Date(year, month - 1, 1))} style={{ padding: '4px 8px', fontSize: '0.72rem' }}>◀</button>
+            <span style={{ fontFamily: 'Outfit', fontWeight: 700, fontSize: '0.88rem', minWidth: '90px', textAlign: 'center' }}>
+              {monthNames[month].slice(0,3)} {year}
+            </span>
+            <button className="btn btn-outline btn-sm" onClick={() => setCurrentDate(new Date(year, month + 1, 1))} style={{ padding: '4px 8px', fontSize: '0.72rem' }}>▶</button>
+          </div>
         </div>
-        
-        {/* Navigation Month Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button className="btn btn-outline btn-sm" onClick={handlePrevMonth}>◀ Previous</button>
-          <span style={{ fontFamily: 'Outfit', fontWeight: 700, fontSize: '1.1rem', minWidth: '150px', textAlign: 'center' }}>
-            {monthNames[month]} {year}
-          </span>
-          <button className="btn btn-outline btn-sm" onClick={handleNextMonth}>Next ▶</button>
-        </div>
+        <p className="page-subtitle" style={{ fontSize: '0.78rem', margin: 0 }}>Tap any calendar day cell to modify exam deadlines or add tests.</p>
       </div>
 
       {loading ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div className="skeleton" style={{ height: '400px', width: '100%', borderRadius: 'var(--radius-lg)' }}></div>
-        </div>
+        <div className="skeleton" style={{ height: '360px', width: '100%', borderRadius: 'var(--radius-md)' }}></div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2.8fr', gap: '24px', alignItems: 'start' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           
-          {/* Left Column: Topic-wise Progress Panel */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div className="card">
-              <h2 className="section-title">📊 Topic Progress</h2>
-              {plans.length === 0 ? (
-                <p className="text-muted text-sm">No active AI study plans found. Plans are generated when you add a subject.</p>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                  {plans.map(plan => {
-                    const matchedSub = subjects.find(s => s.name === plan.subject_name);
-                    const subColor = matchedSub?.color || 'var(--accent-primary)';
-                    
-                    return (
-                      <div key={plan._id || plan.id} style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '16px' }}>
-                        <div className="flex-between mb-8">
-                          <span style={{ fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ width: 10, height: 10, borderRadius: '50%', background: subColor }} />
-                            {plan.subject_name}
-                          </span>
-                          <span className="badge badge-purple">{plan.overall_progress ?? 0}%</span>
-                        </div>
-                        
-                        {/* Progress Bar */}
-                        <div style={{ width: '100%', height: 6, background: 'var(--bg-input)', borderRadius: 3, overflow: 'hidden', marginBottom: '12px' }}>
-                          <div style={{ width: `${plan.overall_progress ?? 0}%`, height: '100%', background: subColor }} />
-                        </div>
-
-                        {/* Topics List checklist */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
-                          {plan.topics?.map((topic, idx) => (
-                            <label key={idx} style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.8rem' }}>
-                              <input 
-                                type="checkbox" 
-                                checked={topic.completed} 
-                                onChange={() => handleToggleTopic(plan._id || plan.id, idx, topic.completed)}
-                                style={{ accentColor: subColor }}
-                              />
-                              <span style={{ textDecoration: topic.completed ? 'line-through' : 'none', color: topic.completed ? 'var(--text-muted)' : 'var(--text-primary)' }}>
-                                Day {topic.day}: {topic.name}
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Column: Calendar Grid */}
-          <div className="card" style={{ padding: '16px', overflow: 'hidden' }}>
+          {/* Calendar Grid Container */}
+          <div className="card" style={{ padding: '8px', overflow: 'hidden' }}>
             {/* Weekday headers */}
             <div className="calendar-grid" style={{ gridTemplateRows: 'auto' }}>
               {weekdays.map(d => (
-                <div key={d} className="calendar-day-header">{d}</div>
+                <div key={d} className="calendar-day-header" style={{ padding: '6px 4px', fontSize: '0.7rem' }}>{d}</div>
               ))}
             </div>
 
             {/* Monthly Day cells */}
-            <div className="calendar-grid" style={{ gridAutoRows: 'minmax(120px, auto)' }}>
+            <div className="calendar-grid" style={{ gridAutoRows: 'minmax(72px, auto)' }}>
               {cells.map((c) => (
-                <div key={c.key} className={c.classNames}>
+                <div 
+                  key={c.key} 
+                  className={c.classNames}
+                  onClick={() => c.day && handleCellClick(c.dateStr)}
+                  style={{ cursor: c.day ? 'pointer' : 'default', padding: '4px', minHeight: '80px' }}
+                >
                   {c.day && (
                     <>
-                      <div className="calendar-day-number">{c.day}</div>
+                      <div className="calendar-day-number" style={{ fontSize: '0.72rem' }}>{c.day}</div>
                       
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
-                        {/* Day Deadlines */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
+                        {/* Exams */}
                         {c.deadlines?.map(sub => (
                           <div 
                             key={sub.id || sub._id} 
                             className="calendar-event"
-                            style={{ background: sub.color || 'var(--accent-primary)', fontSize: '0.7rem', padding: '2px 6px' }}
-                            title={`Exam/Deadline: ${sub.name}`}
+                            style={{ background: sub.color || 'var(--accent-primary)', fontSize: '0.6rem', padding: '1px 3px', borderRadius: '2px' }}
+                            title={`Exam: ${sub.name}`}
                           >
-                            📚 Exam: {sub.name}
+                            📚 {sub.name}
                           </div>
                         ))}
                         
-                        {/* Day Study Plan Topics */}
+                        {/* Study Plan Topics */}
                         {c.topics?.map((topic, idx) => {
                           const matchedSub = subjects.find(s => s.name === topic.subjectName);
                           const subColor = matchedSub?.color || 'var(--accent-primary)';
                           
                           return (
-                            <label 
+                            <div 
                               key={idx} 
                               style={{ 
                                 display: 'flex', 
                                 alignItems: 'center', 
-                                gap: '4px', 
-                                fontSize: '0.7rem', 
+                                gap: '2px', 
+                                fontSize: '0.58rem', 
                                 background: 'rgba(255, 255, 255, 0.04)', 
-                                borderLeft: `3px solid ${subColor}`,
-                                padding: '2px 4px', 
-                                borderRadius: '3px', 
-                                cursor: 'pointer' 
+                                borderLeft: `2px solid ${subColor}`,
+                                padding: '1px 2px', 
+                                borderRadius: '1px', 
+                                color: topic.completed ? 'var(--text-muted)' : 'var(--text-primary)',
+                                textDecoration: topic.completed ? 'line-through' : 'none'
                               }} 
-                              title={`Subject: ${topic.subjectName} | Day ${topic.day}: ${topic.name}`}
+                              title={`Topic: ${topic.name}`}
                             >
-                              <input 
-                                type="checkbox" 
-                                checked={topic.completed} 
-                                onChange={() => handleToggleTopic(topic.planId, topic.topicIndex, topic.completed)}
-                                style={{ width: '11px', height: '11px', accentColor: subColor }}
-                              />
-                              <span style={{ 
-                                textDecoration: topic.completed ? 'line-through' : 'none', 
-                                textOverflow: 'ellipsis', 
-                                overflow: 'hidden', 
-                                whiteSpace: 'nowrap',
-                                color: topic.completed ? 'var(--text-muted)' : 'var(--text-primary)' 
-                              }}>
-                                {topic.name}
-                              </span>
-                            </label>
+                              <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{topic.name}</span>
+                            </div>
                           );
                         })}
                         
-                        {/* Custom Alerts */}
+                        {/* Custom Reminders / Tests */}
                         {c.reminders?.map((rem, idx) => (
                           <div 
                             key={idx} 
                             className="calendar-event"
-                            style={{ background: 'rgba(245, 158, 11, 0.7)', border: '1px solid var(--accent-orange)', fontSize: '0.7rem', padding: '2px 6px' }}
-                            title={`Study Alert: ${rem.message}`}
+                            style={{ background: 'rgba(245, 158, 11, 0.75)', border: '1px solid var(--accent-orange)', fontSize: '0.6rem', padding: '1px 3px', borderRadius: '2px' }}
+                            title={`Event: ${rem.message}`}
                           >
                             🔔 {rem.message}
                           </div>
@@ -305,20 +313,112 @@ export default function CalendarPage() {
             </div>
           </div>
 
+          {/* Legend */}
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: 'var(--accent-primary)', display: 'inline-block' }}></span>
+              Exam/Deadline
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: 'rgba(245, 158, 11, 0.7)', display: 'inline-block' }}></span>
+              Custom Alerts
+            </div>
+          </div>
+
         </div>
       )}
-      
-      {/* Legend */}
-      <div style={{ display: 'flex', gap: '16px', marginTop: '16px', flexWrap: 'wrap', justifyContent: 'center', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: 'var(--accent-primary)', display: 'inline-block' }}></span>
-          Subject Exams / Deadlines
+
+      {/* Interactive Modal Form (Day Clicking) */}
+      {showModal && (
+        <div className="overlay" style={{ zIndex: 1100 }}>
+          <div className="modal animate-slide-up" style={{ padding: '20px', maxWidth: '380px' }}>
+            <div className="modal-header" style={{ marginBottom: '14px' }}>
+              <h3 style={{ fontSize: '0.98rem' }}>📅 Manage: {clickedDateStr}</h3>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)} style={{ fontSize: '0.9rem', padding: '4px' }}>✕</button>
+            </div>
+
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: '6px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '6px', marginBottom: '16px' }}>
+              <button 
+                type="button"
+                className={`btn btn-sm ${modalTab === 'event' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setModalTab('event')}
+                style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }}
+              >
+                🔔 Add Event/Test
+              </button>
+              <button 
+                type="button"
+                className={`btn btn-sm ${modalTab === 'deadline' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setModalTab('deadline')}
+                style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }}
+              >
+                ⚙️ Set Exam Date
+              </button>
+            </div>
+
+            {modalError && <div className="auth-error text-xs mb-16">{modalError}</div>}
+
+            {/* Tab 1: Custom Event Creation */}
+            {modalTab === 'event' && (
+              <form onSubmit={handleAddCustomEvent} className="flex-col" style={{ gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="calendar-event-title" style={{ fontSize: '0.72rem' }}>Event / Test Title</label>
+                  <input 
+                    id="calendar-event-title"
+                    className="form-input" 
+                    placeholder="e.g. 2 lessons test" 
+                    value={eventMessage}
+                    onChange={(e) => setEventMessage(e.target.value)}
+                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    required
+                  />
+                </div>
+                <button 
+                  type="submit" 
+                  className={`btn btn-primary btn-full ${submitting ? 'btn-loading' : ''}`}
+                  disabled={submitting || !eventMessage.trim()}
+                  style={{ fontSize: '0.8rem', padding: '10px' }}
+                >
+                  {submitting ? 'Scheduling...' : 'Save Event'}
+                </button>
+              </form>
+            )}
+
+            {/* Tab 2: Change Subject Exam Deadline */}
+            {modalTab === 'deadline' && (
+              <form onSubmit={handleChangeSubjectDeadline} className="flex-col" style={{ gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="calendar-subject-select" style={{ fontSize: '0.72rem' }}>Select Subject</label>
+                  {subjects.length === 0 ? (
+                    <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>No subjects configured.</p>
+                  ) : (
+                    <select 
+                      id="calendar-subject-select"
+                      className="form-input"
+                      value={targetSubjectId}
+                      onChange={(e) => setTargetSubjectId(e.target.value)}
+                      style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    >
+                      {subjects.map(s => (
+                        <option key={s._id || s.id} value={s._id || s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+                <button 
+                  type="submit" 
+                  className={`btn btn-primary btn-full ${submitting ? 'btn-loading' : ''}`}
+                  disabled={submitting || subjects.length === 0}
+                  style={{ fontSize: '0.8rem', padding: '10px' }}
+                >
+                  {submitting ? 'Rescheduling...' : 'Set Deadline'}
+                </button>
+              </form>
+            )}
+          </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span style={{ width: '12px', height: '12px', borderRadius: '3px', background: 'rgba(245, 158, 11, 0.7)', display: 'inline-block' }}></span>
-          Custom Study Reminders
-        </div>
-      </div>
+      )}
     </div>
   );
 }

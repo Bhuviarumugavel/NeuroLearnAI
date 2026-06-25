@@ -1,17 +1,18 @@
 /**
- * NotesPage.jsx — AI Summarizer & Study Notes Page
- * Enables users to upload text or files to instantly generate AI summaries.
- * Organizes and displays saved summaries and study guides for study.
+ * NotesPage.jsx — AI Summarizer & Study Notes Page.
+ * Displays subject-wise study notes first, followed by the manual text/document summarizer tool.
  */
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../utils/api';
+import { useData } from '../context/DataContext';
 import { useStudyTimer } from '../context/StudyTimerContext';
 
 export default function NotesPage() {
+  const { subjects, notes, refreshNotes, refreshSummary } = useData();
   const { startSession, stopSession } = useStudyTimer();
 
-  const [subjects, setSubjects] = useState([]);
+  // Selection & Upload Form States
   const [selectedSubject, setSelectedSubject] = useState('');
   const [form, setForm] = useState({ text: '', tags: '' });
   const [formFile, setFormFile] = useState(null);
@@ -20,44 +21,21 @@ export default function NotesPage() {
   const [successData, setSuccessData] = useState(null);
   const [error, setError] = useState('');
 
-  // Tabs: 'summarizer' (Manual AI Summarizer) | 'library' (AI Study Notes)
-  const [activeTab, setActiveTab] = useState('summarizer');
-
-  // Catalog / Library states
-  const [savedNotes, setSavedNotes] = useState([]);
-  const [loadingNotes, setLoadingNotes] = useState(true);
+  // Study Notes Filter States
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState('All');
-  const [expandedNotes, setExpandedNotes] = useState({}); // Tracking which original texts are open
+  const [expandedNotes, setExpandedNotes] = useState({});
 
-  // Fetch subjects for select list
+  // Auto-select first subject in form when subjects are loaded
   useEffect(() => {
-    api.get('/api/subjects')
-      .then((r) => {
-        const list = r.data.subjects || [];
-        setSubjects(list);
-        if (list.length > 0) {
-          setSelectedSubject(list[0]._id || list[0].id);
-        }
-      })
-      .catch(() => {});
-    loadNotesCatalog();
-  }, []);
-
-  const loadNotesCatalog = async () => {
-    try {
-      const res = await api.get('/api/notes');
-      setSavedNotes(res.data.notes || []);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoadingNotes(false);
+    if (subjects.length > 0 && !selectedSubject) {
+      setSelectedSubject(subjects[0]._id || subjects[0].id);
     }
-  };
+  }, [subjects, selectedSubject]);
 
-  // Monitor selected subject to automatically trigger/update background study timer
+  // Monitor selected subject to automatically trigger background study timer
   useEffect(() => {
-    if (selectedSubject && activeTab === 'summarizer') {
+    if (selectedSubject) {
       const sub = subjects.find(s => (s._id || s.id) === selectedSubject);
       if (sub) {
         startSession(selectedSubject, sub.name);
@@ -65,7 +43,8 @@ export default function NotesPage() {
     } else {
       stopSession();
     }
-  }, [selectedSubject, activeTab, subjects]);
+    return () => stopSession();
+  }, [selectedSubject, subjects]);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -84,7 +63,7 @@ export default function NotesPage() {
     const isValid = validExtensions.includes(fileExt) || file.type.startsWith('image/') || file.type === 'application/pdf';
     
     if (!isValid) {
-      setError("Unsupported file format. Please upload text (.txt, .md), PDF (.pdf), Word (.docx) or Image files.");
+      setError("Unsupported file format (.txt, .md, .pdf, .docx, or images).");
       setFormFile(null);
       return;
     }
@@ -150,17 +129,13 @@ export default function NotesPage() {
         tags: form.tags ? form.tags.split(',').map(t => t.trim()) : [subjectTag, 'AI Summary']
       });
 
-      // Clear input form
       setForm({ text: '', tags: '' });
       setFormFile(null);
       
-      // Auto-stop timer session
-      stopSession();
-      
-      // Reload catalog to show the new summary note
-      await loadNotesCatalog();
+      // Update global context states
+      await Promise.all([refreshNotes(), refreshSummary()]);
     } catch (err) {
-      setError(err.response?.data?.detail || 'AI Summarization failed. Please verify connection and try again.');
+      setError(err.response?.data?.detail || 'AI Summarization failed.');
     } finally {
       setLoading(false);
     }
@@ -171,22 +146,18 @@ export default function NotesPage() {
     if (!window.confirm('Delete this resource permanently?')) return;
     try {
       await api.delete(`/api/notes/${id}`);
-      setSavedNotes(prev => prev.filter(n => (n._id || n.id) !== id));
+      await Promise.all([refreshNotes(), refreshSummary()]);
     } catch (err) {
       console.error(err);
     }
   };
 
   const toggleExpandNote = (id) => {
-    setExpandedNotes(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
+    setExpandedNotes(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  // Filter notes by subject selection and search query (only manual notes in the AI Summarizer catalog)
-  const filteredNotes = savedNotes.filter(note => {
-    if (note.type !== 'manual') return false;
+  // Filter study notes (combines manual uploaded summaries & auto-generated ones)
+  const filteredNotes = notes.filter(note => {
     const matchesSubject = selectedSubjectFilter === 'All' || (note.subject && note.subject.toLowerCase() === selectedSubjectFilter.toLowerCase());
     const query = searchQuery.toLowerCase();
     const matchesSearch = !query || (
@@ -201,322 +172,243 @@ export default function NotesPage() {
   return (
     <div className="page-container animate-slide-up">
       {/* Header */}
-      <div className="page-header">
-        <h1 className="page-title">📝 AI Summarizer</h1>
-        <p className="page-subtitle">Upload text or documents to summarize, and study compiled subject summaries</p>
+      <div>
+        <h1 className="page-title" style={{ fontSize: '1.4rem' }}>📝 Study & Summarizer</h1>
+        <p className="page-subtitle" style={{ fontSize: '0.8rem' }}>Review daily subject summaries or compile new notes</p>
       </div>
 
-      {/* Tab Control Header */}
-      <div style={{ display: 'flex', gap: '12px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px', marginBottom: '24px' }}>
-        <button 
-          className={`btn ${activeTab === 'summarizer' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => { setActiveTab('summarizer'); setError(''); setSuccessData(null); }}
-          style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', fontWeight: 600 }}
-        >
-          ⚡ Manual AI Summarizer
-        </button>
-        <button 
-          className={`btn ${activeTab === 'library' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => { setActiveTab('library'); setError(''); setSuccessData(null); }}
-          style={{ padding: '8px 16px', borderRadius: 'var(--radius-md)', fontWeight: 600 }}
-        >
-          📚 AI Study Notes ({savedNotes.filter(n => n.type === 'manual').length})
-        </button>
-      </div>
-
-      {/* Tab content 1: Manual AI Summarizer */}
-      {activeTab === 'summarizer' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr', gap: '24px', alignItems: 'start' }}>
-          {/* Left Column: Form */}
-          <div className="card">
-            <h2 className="section-title">⚡ Summarize Document</h2>
-            {error && <div className="auth-error mb-16">{error}</div>}
-
-            {subjects.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>📚</div>
-                <h3 style={{ fontSize: '1rem', color: 'var(--text-secondary)' }}>Add a Subject First</h3>
-                <p className="text-muted text-sm mb-16">You need to have at least one subject configured to assign summaries.</p>
-                <Link to="/subjects" className="btn btn-primary btn-sm">Configure Subjects</Link>
-              </div>
-            ) : (
-              <form onSubmit={handleSubmit} className="flex-col" onDragEnter={handleDrag} id="summarizer-form">
-                {/* Subject Selector */}
-                <div className="form-group">
-                  <label className="form-label" htmlFor="summarizer-subject">Select Subject Category</label>
-                  <select 
-                    id="summarizer-subject"
-                    className="form-input" 
-                    value={selectedSubject} 
-                    onChange={(e) => setSelectedSubject(e.target.value)}
-                    style={{ background: 'var(--bg-input)', cursor: 'pointer' }}
-                  >
-                    {subjects.map(s => (
-                      <option key={s._id || s.id} value={s._id || s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                  <span className="text-xs text-muted">⏱️ Background focus timer tracks time spent studying this subject.</span>
-                </div>
-
-                {/* File Upload Zone */}
-                <div className="form-group">
-                  <label className="form-label">Upload Notes File (Text, PDF, DOCX, Image)</label>
-                  <div 
-                    className={`flex-col flex-center ${dragActive ? 'drag-active' : ''}`}
-                    onDragEnter={handleDrag}
-                    onDragOver={handleDrag}
-                    onDragLeave={handleDrag}
-                    onDrop={handleDrop}
-                    style={{
-                      border: '2px dashed var(--border)',
-                      borderRadius: 'var(--radius-md)',
-                      padding: '20px',
-                      textAlign: 'center',
-                      background: dragActive ? 'rgba(124, 58, 237, 0.05)' : 'var(--bg-input)',
-                      transition: 'all 0.2s',
-                      cursor: 'pointer'
-                    }}
-                    onClick={() => document.getElementById('file-upload-input').click()}
-                  >
-                    <div style={{ fontSize: '1.8rem', marginBottom: '4px' }}>📁</div>
-                    <div style={{ fontSize: '0.8rem', fontWeight: 600 }}>
-                      {formFile ? `Selected: ${formFile.name}` : 'Drag & Drop or Click to Upload'}
-                    </div>
-                    <input 
-                      id="file-upload-input" 
-                      type="file" 
-                      accept=".txt,.md,.pdf,.docx,image/*"
-                      onChange={handleFileChange} 
-                      style={{ display: 'none' }} 
-                    />
-                  </div>
-                </div>
-
-                {/* Raw Text Input */}
-                <div className="form-group">
-                  <label className="form-label" htmlFor="summarizer-content">Or Paste Study Material Content *</label>
-                  <textarea 
-                    id="summarizer-content"
-                    className="form-input" 
-                    placeholder="Type or paste textbook paragraphs, lecture slides, or syllabus notes here..."
-                    rows={6}
-                    value={form.text}
-                    onChange={(e) => setForm(f => ({ ...f, text: e.target.value }))}
-                    style={{ resize: 'vertical' }}
-                    required
-                  />
-                </div>
-
-                {/* Search tags */}
-                <div className="form-group">
-                  <label className="form-label" htmlFor="summarizer-tags">Manual Search Tags (comma separated)</label>
-                  <input 
-                    id="summarizer-tags"
-                    className="form-input" 
-                    placeholder="e.g. formulas, homework, Lecture 1" 
-                    value={form.tags}
-                    onChange={(e) => setForm(f => ({ ...f, tags: e.target.value }))}
-                  />
-                </div>
-
-                <button 
-                  type="submit" 
-                  id="summarizer-submit"
-                  className={`btn btn-primary btn-full ${loading ? 'btn-loading' : ''}`} 
-                  disabled={loading}
-                >
-                  {loading ? 'Analyzing Content...' : '✨ Save & Summarize'}
-                </button>
-              </form>
-            )}
-          </div>
-
-          {/* Right Column: Live Output Preview */}
-          <div className="card" style={{ height: '100%', minHeight: '400px' }}>
-            <h2 className="section-title">📋 Live Summary Output</h2>
-            {successData ? (
-              <div className="animate-fade-in flex-col" style={{ gap: '16px' }}>
-                <div className="flex-between">
-                  <span className="badge badge-purple">Category: {successData.subject}</span>
-                  <span className="badge badge-green">Saved to Library</span>
-                </div>
-                <div style={{ background: 'var(--bg-input)', borderLeft: '4px solid var(--accent-light)', padding: '16px', borderRadius: 'var(--radius-md)' }}>
-                  <div style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--accent-light)', textTransform: 'uppercase', marginBottom: '6px' }}>AI Generated Summary Points</div>
-                  <p style={{ fontSize: '0.88rem', color: 'var(--text-primary)', lineHeight: '1.6', whiteSpace: 'pre-wrap', margin: 0 }}>
-                    {successData.summary}
-                  </p>
-                </div>
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-                  {successData.tags.map(t => <span key={t} className="badge badge-blue" style={{ fontSize: '0.7rem' }}>#{t}</span>)}
-                </div>
-                <button className="btn btn-outline btn-sm mt-8" onClick={() => setSuccessData(null)}>Clear Output</button>
-              </div>
-            ) : (
-              <div className="flex-col flex-center text-muted" style={{ padding: '60px 20px', textAlign: 'center', height: '100%', justifyContent: 'center' }}>
-                <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>✨</div>
-                <h3>No Live Output</h3>
-                <p style={{ fontSize: '0.82rem', maxWidth: '300px' }}>Pasted content or uploaded files will show their generated summaries here immediately after creation.</p>
-              </div>
-            )}
+      {/* SECTION 1: AI Study Notes Library (Daily Study Material) */}
+      <div className="card" style={{ padding: '16px' }}>
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '12px' }}>📚 AI Study Guides</h2>
+        
+        {/* Filter Toolbar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+          <input 
+            type="text" 
+            className="form-input" 
+            placeholder="Search study material..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            style={{ padding: '8px 12px', fontSize: '0.8rem', height: '36px' }}
+          />
+          <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+            <button 
+              className={`btn btn-sm ${selectedSubjectFilter === 'All' ? 'btn-primary' : 'btn-outline'}`}
+              onClick={() => setSelectedSubjectFilter('All')}
+              style={{ fontSize: '0.72rem', padding: '6px 12px' }}
+            >
+              All
+            </button>
+            {subjects.map(s => (
+              <button 
+                key={s._id || s.id}
+                className={`btn btn-sm ${selectedSubjectFilter === s.name ? 'btn-primary' : 'btn-outline'}`}
+                onClick={() => setSelectedSubjectFilter(s.name)}
+                style={{ fontSize: '0.72rem', padding: '6px 12px' }}
+              >
+                {s.name}
+              </button>
+            ))}
           </div>
         </div>
-      )}
 
-      {/* Tab content 2: AI Study Notes */}
-      {activeTab === 'library' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {/* Filtering and Search Controls */}
-          <div className="card" style={{ padding: '16px' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1.2fr', gap: '20px', alignItems: 'center' }}>
-              {/* Subject Tabs */}
-              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
-                <button 
-                  className={`btn btn-sm ${selectedSubjectFilter === 'All' ? 'btn-primary' : 'btn-outline'}`}
-                  onClick={() => setSelectedSubjectFilter('All')}
-                >
-                  All Categories
-                </button>
-                {subjects.map(s => (
-                  <button 
-                    key={s._id || s.id}
-                    className={`btn btn-sm ${selectedSubjectFilter === s.name ? 'btn-primary' : 'btn-outline'}`}
-                    onClick={() => setSelectedSubjectFilter(s.name)}
-                  >
-                    {s.name}
-                  </button>
-                ))}
-              </div>
+        {/* Study Notes List */}
+        {filteredNotes.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: '2rem' }}>📖</div>
+            <p style={{ fontSize: '0.8rem', marginTop: '6px' }}>No daily study materials found under this filter.</p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '420px', overflowY: 'auto', paddingRight: '4px' }}>
+            {filteredNotes.map((note) => {
+              const id = note._id || note.id;
+              const matchedSub = subjects.find(s => s.name.toLowerCase() === note.subject?.toLowerCase());
+              const subColor = matchedSub?.color || 'var(--accent-primary)';
+              const isExpanded = !!expandedNotes[id];
               
-              {/* Search input */}
-              <input 
-                type="text" 
+              return (
+                <div 
+                  key={id} 
+                  className="animate-fade-in"
+                  style={{ 
+                    padding: '14px', 
+                    background: 'var(--bg-input)', 
+                    borderRadius: 'var(--radius-md)',
+                    borderLeft: `4px solid ${subColor}`,
+                    position: 'relative'
+                  }}
+                >
+                  <button 
+                    onClick={(e) => handleDeleteNote(id, e)}
+                    style={{ position: 'absolute', top: 12, right: 12, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.8rem' }}
+                  >
+                    ✕
+                  </button>
+
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginBottom: '8px' }}>
+                    <span className="badge badge-purple" style={{ background: `${subColor}15`, color: subColor, fontSize: '0.65rem', border: `1px solid ${subColor}20` }}>
+                      {note.subject}
+                    </span>
+                    <span className="badge badge-blue" style={{ fontSize: '0.62rem' }}>
+                      {note.type === 'auto_generated' ? '✨ AI Study Guide' : '📝 Manual Notes'}
+                    </span>
+                  </div>
+
+                  <h4 style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '8px', paddingRight: '20px' }}>
+                    {note.original_text && note.type === 'manual' 
+                      ? `${note.original_text.slice(0, 50)}${note.original_text.length > 50 ? '...' : ''}` 
+                      : `${note.subject} Course Study Sheet`}
+                  </h4>
+
+                  {note.summary && (
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: '1.5', whiteSpace: 'pre-wrap', margin: '4px 0 8px' }}>
+                      {note.summary}
+                    </p>
+                  )}
+
+                  {note.generated_notes && (
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: '1.5', whiteSpace: 'pre-wrap', margin: '4px 0 8px' }}>
+                      {note.generated_notes}
+                    </p>
+                  )}
+
+                  {note.original_text && (
+                    <div style={{ marginTop: '6px' }}>
+                      <button 
+                        className="btn btn-ghost btn-xs" 
+                        onClick={() => toggleExpandNote(id)}
+                        style={{ fontSize: '0.7rem', padding: '0 4px', height: 'auto', color: 'var(--text-muted)' }}
+                      >
+                        {isExpanded ? '▼ Hide Source' : '▶ Show Source'}
+                      </button>
+                      {isExpanded && (
+                        <div style={{ marginTop: '6px', padding: '8px', background: 'rgba(0,0,0,0.2)', borderRadius: '4px', fontSize: '0.75rem', color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', maxHeight: '120px', overflowY: 'auto' }}>
+                          {note.original_text}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* SECTION 2: Manual AI Notes Summarizer (Form + Output) */}
+      <div className="card" style={{ padding: '16px' }}>
+        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '12px' }}>⚡ Summarize Document</h2>
+        
+        {error && <div className="auth-error text-xs mb-16">{error}</div>}
+
+        {subjects.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '16px 0' }}>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Add a subject category first in settings.</p>
+            <Link to="/subjects" className="btn btn-primary btn-sm mt-8">Configure Subjects</Link>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex-col" onDragEnter={handleDrag} style={{ gap: '12px' }}>
+            {/* Subject Selector */}
+            <div className="form-group">
+              <label className="form-label" htmlFor="summarizer-subject" style={{ fontSize: '0.75rem' }}>Subject Category</label>
+              <select 
+                id="summarizer-subject"
                 className="form-input" 
-                placeholder="Search summaries..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                style={{ height: '36px', fontSize: '0.85rem' }}
+                value={selectedSubject} 
+                onChange={(e) => setSelectedSubject(e.target.value)}
+                style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '38px', padding: '8px 12px' }}
+              >
+                {subjects.map(s => (
+                  <option key={s._id || s.id} value={s._id || s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* File Upload Zone */}
+            <div className="form-group">
+              <label className="form-label" style={{ fontSize: '0.75rem' }}>Upload Document File</label>
+              <div 
+                className={`flex-col flex-center ${dragActive ? 'drag-active' : ''}`}
+                onDragEnter={handleDrag}
+                onDragOver={handleDrag}
+                onDragLeave={handleDrag}
+                onDrop={handleDrop}
+                style={{
+                  border: '1.5px dashed var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '14px',
+                  textAlign: 'center',
+                  background: dragActive ? 'rgba(124, 58, 237, 0.05)' : 'var(--bg-input)',
+                  cursor: 'pointer'
+                }}
+                onClick={() => document.getElementById('file-upload-input').click()}
+              >
+                <div style={{ fontSize: '1.4rem' }}>📁</div>
+                <div style={{ fontSize: '0.72rem', fontWeight: 600 }}>
+                  {formFile ? `Selected: ${formFile.name}` : 'Drag file here or click to browse'}
+                </div>
+                <input 
+                  id="file-upload-input" 
+                  type="file" 
+                  accept=".txt,.md,.pdf,.docx,image/*"
+                  onChange={handleFileChange} 
+                  style={{ display: 'none' }} 
+                />
+              </div>
+            </div>
+
+            {/* Raw Text Input */}
+            <div className="form-group">
+              <label className="form-label" htmlFor="summarizer-content" style={{ fontSize: '0.75rem' }}>Paste Content</label>
+              <textarea 
+                id="summarizer-content"
+                className="form-input" 
+                placeholder="Paste paragraph contents to analyze..."
+                rows={4}
+                value={form.text}
+                onChange={(e) => setForm(f => ({ ...f, text: e.target.value }))}
+                style={{ fontSize: '0.8rem', padding: '8px 12px' }}
+                required
               />
             </div>
+
+            {/* Search tags */}
+            <div className="form-group">
+              <label className="form-label" htmlFor="summarizer-tags" style={{ fontSize: '0.75rem' }}>Manual Tags (comma separated)</label>
+              <input 
+                id="summarizer-tags"
+                className="form-input" 
+                placeholder="e.g. key-formulas, exam-prep" 
+                value={form.tags}
+                onChange={(e) => setForm(f => ({ ...f, tags: e.target.value }))}
+                style={{ fontSize: '0.8rem', height: '38px', padding: '8px 12px' }}
+              />
+            </div>
+
+            <button 
+              type="submit" 
+              className={`btn btn-primary btn-full ${loading ? 'btn-loading' : ''}`} 
+              disabled={loading}
+              style={{ padding: '10px 16px', fontSize: '0.85rem' }}
+            >
+              {loading ? 'Summarizing...' : '✨ Save & Summarize'}
+            </button>
+          </form>
+        )}
+
+        {/* Live Output Section */}
+        {successData && (
+          <div className="animate-fade-in flex-col" style={{ gap: '8px', marginTop: '16px', padding: '12px', background: 'var(--bg-input)', borderRadius: 'var(--radius-md)' }}>
+            <div className="flex-between">
+              <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Summarized & Saved</span>
+            </div>
+            <p style={{ fontSize: '0.78rem', color: 'var(--text-primary)', lineHeight: '1.5', whiteSpace: 'pre-wrap', margin: 0 }}>
+              {successData.summary}
+            </p>
+            <button className="btn btn-outline btn-xs" onClick={() => setSuccessData(null)} style={{ fontSize: '0.7rem', padding: '4px 8px', alignSelf: 'flex-start' }}>Clear Output</button>
           </div>
-
-          {/* Summarized Notes list rendered directly for study */}
-          {loadingNotes ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
-              <span className="spinner"></span>
-            </div>
-          ) : filteredNotes.length === 0 ? (
-            <div className="card flex-col flex-center text-muted" style={{ padding: '60px 20px', textAlign: 'center' }}>
-              <div style={{ fontSize: '2.5rem', marginBottom: '8px' }}>📖</div>
-              <h3>No Summarized Notes Found</h3>
-              <p style={{ fontSize: '0.82rem' }}>Summaries and auto-notes generated for your subjects will appear here once added.</p>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {filteredNotes.map((note) => {
-                const id = note._id || note.id;
-                const matchedSub = subjects.find(s => s.name.toLowerCase() === note.subject?.toLowerCase());
-                const subColor = matchedSub?.color || 'var(--accent-primary)';
-                const isExpanded = !!expandedNotes[id];
-                
-                return (
-                  <div 
-                    key={id} 
-                    className="card animate-fade-in"
-                    style={{ 
-                      padding: '24px', 
-                      background: 'var(--bg-card)', 
-                      border: '1px solid var(--border-subtle)',
-                      borderLeft: `5px solid ${subColor}`,
-                      position: 'relative'
-                    }}
-                  >
-                    {/* Delete Note Button */}
-                    <button 
-                      onClick={(e) => handleDeleteNote(id, e)}
-                      style={{ position: 'absolute', top: 20, right: 20, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.9rem' }}
-                      title="Delete summary notes"
-                    >
-                      ✕
-                    </button>
-
-                    {/* Subject & Type Header */}
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '12px' }}>
-                      <span className="badge badge-purple" style={{ background: `${subColor}15`, color: subColor, border: `1px solid ${subColor}30`, fontSize: '0.72rem' }}>
-                        {note.subject}
-                      </span>
-                      <span className="badge badge-blue" style={{ fontSize: '0.68rem' }}>
-                        {note.type === 'auto_generated' ? '✨ AI Study Guide' : '📝 Manual Notes'}
-                      </span>
-                      <span className="text-xs text-muted" style={{ marginLeft: 'auto', marginRight: '24px' }}>
-                        {note.created_at ? new Date(note.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
-                      </span>
-                    </div>
-
-                    {/* Note Title */}
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '14px', paddingRight: '32px' }}>
-                      {note.original_text && note.type === 'manual' 
-                        ? `${note.original_text.slice(0, 80)}${note.original_text.length > 80 ? '...' : ''}` 
-                        : `${note.subject} Course Study Sheet`}
-                    </h3>
-
-                    {/* AI Summary Section */}
-                    {note.summary && (
-                      <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: 'var(--radius-md)', borderLeft: '3px solid var(--accent-light)', marginBottom: '14px' }}>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--accent-light)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>AI Summary Points</div>
-                        <p style={{ fontSize: '0.88rem', color: 'var(--text-primary)', lineHeight: '1.6', whiteSpace: 'pre-wrap', margin: 0 }}>
-                          {note.summary}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* AI Auto-Generated Content (e.g. starter notes) */}
-                    {note.generated_notes && (
-                      <div style={{ background: 'var(--bg-input)', padding: '16px', borderRadius: 'var(--radius-md)', borderLeft: '3px solid var(--accent-purple)', marginBottom: '14px' }}>
-                        <div style={{ fontSize: '0.72rem', fontWeight: 800, color: 'var(--accent-purple)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px' }}>AI Generated Study Guide</div>
-                        <p style={{ fontSize: '0.88rem', color: 'var(--text-primary)', lineHeight: '1.6', whiteSpace: 'pre-wrap', margin: 0 }}>
-                          {note.generated_notes}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Expandable Original Source Content */}
-                    {note.original_text && (
-                      <div style={{ marginTop: '10px' }}>
-                        <button 
-                          className="btn btn-ghost btn-xs" 
-                          onClick={() => toggleExpandNote(id)}
-                          style={{ fontSize: '0.78rem', color: 'var(--text-muted)', paddingLeft: 0 }}
-                        >
-                          {isExpanded ? '▼ Hide Original Source Text' : '▶ Show Original Source Text'}
-                        </button>
-                        
-                        {isExpanded && (
-                          <div 
-                            className="animate-fade-in"
-                            style={{ 
-                              marginTop: '8px', 
-                              padding: '12px', 
-                              background: 'rgba(255,255,255,0.01)', 
-                              border: '1px solid var(--border-subtle)', 
-                              borderRadius: 'var(--radius-md)', 
-                              fontSize: '0.8rem', 
-                              color: 'var(--text-secondary)', 
-                              lineHeight: '1.5', 
-                              whiteSpace: 'pre-wrap' 
-                            }}
-                          >
-                            {note.original_text}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
