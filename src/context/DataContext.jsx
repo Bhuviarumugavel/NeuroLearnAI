@@ -10,6 +10,7 @@ export function DataProvider({ children }) {
   const [notes, setNotes] = useState([]);
   const [reminders, setReminders] = useState([]);
   const [quizzes, setQuizzes] = useState([]);
+  const [plans, setPlans] = useState([]);
   const [progressSummary, setProgressSummary] = useState(null);
   const [loading, setLoading] = useState(false);
 
@@ -49,6 +50,15 @@ export function DataProvider({ children }) {
     }
   }, []);
 
+  const refreshPlans = useCallback(async () => {
+    try {
+      const res = await api.get('/api/study-plans');
+      setPlans(res.data.plans || []);
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
+
   const refreshSummary = useCallback(async () => {
     try {
       const res = await api.get('/api/dashboard/summary');
@@ -67,6 +77,7 @@ export function DataProvider({ children }) {
         refreshNotes(),
         refreshReminders(),
         refreshQuizzes(),
+        refreshPlans(),
         refreshSummary()
       ]);
     } catch (e) {
@@ -94,12 +105,14 @@ export function DataProvider({ children }) {
     notes,
     reminders,
     quizzes,
+    plans,
     progressSummary,
     loading,
     refreshSubjects,
     refreshNotes,
     refreshReminders,
     refreshQuizzes,
+    refreshPlans,
     refreshSummary,
     refreshAll,
   };
