@@ -1,9 +1,11 @@
 /**
  * NotesPage.jsx — AI Summarizer & Timetable Study Page.
- * Displays subject-wise study notes first, featuring two views:
- * 1. Timetable Notes (Daily topics for study based on timeline).
- * 2. Study & Quiz Analytics (Tracks focus duration and last quiz attend times).
- * Features a manual documents summarizer directly below.
+ * Restructured to support:
+ * 1. Study Notes & Time Tracker (Option 1)
+ *    - Displays subject study notes.
+ *    - Integrates live focus timer and study time calculations.
+ * 2. Manual Unit Summarizer (Option 2)
+ *    - Generates specialized summaries for time management from unit notes.
  */
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
@@ -12,11 +14,15 @@ import { useData } from '../context/DataContext';
 import { useStudyTimer } from '../context/StudyTimerContext';
 
 export default function NotesPage() {
-  const { subjects, notes, quizzes, plans, refreshNotes, refreshSummary } = useData();
-  const { startSession, stopSession } = useStudyTimer();
+  const { subjects, notes, refreshNotes, refreshSummary } = useData();
+  const { activeSubjectId, secondsElapsed, isActive, startSession, stopSession } = useStudyTimer();
 
-  // Selection & Upload Form States
+  // Primary page tab: 'study' (Option 1) | 'manual' (Option 2)
+  const [activeTab, setActiveTab] = useState('study');
+
+  // Manual summarizer form states
   const [selectedSubject, setSelectedSubject] = useState('');
+  const [summaryType, setSummaryType] = useState('time_management'); // 'time_management' (default) | 'general'
   const [form, setForm] = useState({ text: '', tags: '' });
   const [formFile, setFormFile] = useState(null);
   const [dragActive, setDragActive] = useState(false);
@@ -24,33 +30,16 @@ export default function NotesPage() {
   const [successData, setSuccessData] = useState(null);
   const [error, setError] = useState('');
 
-  // AI Study Guides View Modes: 'timetable' | 'analytics'
-  const [studyViewMode, setStudyViewMode] = useState('timetable');
-
   // Search/Filters
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedSubjectFilter, setSelectedSubjectFilter] = useState('All');
   const [expandedNotes, setExpandedNotes] = useState({});
 
-  // Auto-select first subject on load
+  // Auto-select first subject in manual dropdown on load
   useEffect(() => {
     if (subjects.length > 0 && !selectedSubject) {
       setSelectedSubject(subjects[0]._id || subjects[0].id);
     }
   }, [subjects, selectedSubject]);
-
-  // Monitor selected subject to automatically trigger background study timer
-  useEffect(() => {
-    if (selectedSubject) {
-      const sub = subjects.find(s => (s._id || s.id) === selectedSubject);
-      if (sub) {
-        startSession(selectedSubject, sub.name);
-      }
-    } else {
-      stopSession();
-    }
-    return () => stopSession();
-  }, [selectedSubject, subjects]);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -118,6 +107,7 @@ export default function NotesPage() {
         const formData = new FormData();
         formData.append('file', formFile);
         formData.append('subject_tag', subjectTag);
+        formData.append('summary_type', summaryType);
         
         res = await api.post('/api/notes/upload-file', formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
@@ -125,14 +115,15 @@ export default function NotesPage() {
       } else {
         res = await api.post('/api/notes', {
           text: form.text,
-          subject_tag: subjectTag
+          subject_tag: subjectTag,
+          summary_type: summaryType
         });
       }
 
       setSuccessData({
         summary: res.data.summary,
         subject: subjectTag,
-        tags: form.tags ? form.tags.split(',').map(t => t.trim()) : [subjectTag, 'AI Summary']
+        tags: form.tags ? form.tags.split(',').map(t => t.trim()) : [subjectTag, summaryType === 'time_management' ? 'Time Management' : 'AI Summary']
       });
 
       setForm({ text: '', tags: '' });
@@ -160,13 +151,6 @@ export default function NotesPage() {
     setExpandedNotes(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const getTopicDateStr = (planCreatedAt, topicDay) => {
-    if (!planCreatedAt) return '';
-    const start = new Date(planCreatedAt);
-    start.setDate(start.getDate() + (topicDay - 1));
-    return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
-  };
-
   // Helper: Format focus time duration
   const formatFocusTime = (secs) => {
     if (!secs) return '0 mins';
@@ -177,143 +161,263 @@ export default function NotesPage() {
     return `${hrs}h ${remainingMins}m`;
   };
 
-  // Option 1 Filter: Timetable Scheduled study notes matching subjects
-  const getTimetableNotes = () => {
-    const today = new Date();
-    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-
-    return subjects.map(sub => {
-      const plan = plans.find(p => p.subject_name.toLowerCase() === sub.name.toLowerCase());
+  // Calculate days remaining to exam and total recommended study time
+  const getSubjectTimeStats = (sub) => {
+    const dailyTarget = sub.daily_study_minutes || 45;
+    let daysRemaining = null;
+    let recommendedTimeLeftStr = 'N/A';
+    
+    if (sub.deadline) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const examDate = new Date(sub.deadline);
+      examDate.setHours(0, 0, 0, 0);
       
-      // Find today's topic or default to first incomplete topic
-      let activeTopic = null;
-      if (plan && plan.topics) {
-        activeTopic = plan.topics.find(t => getTopicDateStr(plan.created_at, t.day) === todayStr);
-        if (!activeTopic) {
-          activeTopic = plan.topics.find(t => !t.completed);
-        }
+      const timeDiff = examDate - today;
+      daysRemaining = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+      
+      if (daysRemaining > 0) {
+        const totalMins = daysRemaining * dailyTarget;
+        const totalHrs = (totalMins / 60).toFixed(1);
+        recommendedTimeLeftStr = `${totalHrs} hrs total`;
+      } else if (daysRemaining === 0) {
+        recommendedTimeLeftStr = 'Exam is today!';
+      } else {
+        recommendedTimeLeftStr = 'Exam passed';
       }
-
-      // Find notes matching this subject
-      const matchingNotes = notes.filter(n => n.subject.toLowerCase() === sub.name.toLowerCase());
-
-      return {
-        subject: sub,
-        topic: activeTopic,
-        notes: matchingNotes
-      };
-    });
+    }
+    
+    return {
+      dailyTarget,
+      daysRemaining,
+      recommendedTimeLeftStr
+    };
   };
-
-  const timetableData = getTimetableNotes();
 
   return (
     <div className="page-container animate-slide-up">
       {/* Header */}
-      <div>
+      <div className="page-header" style={{ marginBottom: '16px' }}>
         <h1 className="page-title" style={{ fontSize: '1.4rem' }}>📝 Study & Summarizer</h1>
-        <p className="page-subtitle" style={{ fontSize: '0.8rem' }}>Review timetable study notes or verify focus metrics</p>
+        <p className="page-subtitle" style={{ fontSize: '0.8rem' }}>Study subject notes, calculate focus durations, or create specialized summaries</p>
       </div>
 
-      {/* SECTION 1: AI Study Guides Option Selector */}
-      <div className="card" style={{ padding: '16px' }}>
-        
-        {/* Toggle options for Timetable or Analytics */}
-        <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px', marginBottom: '14px' }}>
-          <button 
-            className={`btn btn-sm ${studyViewMode === 'timetable' ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setStudyViewMode('timetable')}
-            style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }}
-          >
-            📅 Timetable Notes
-          </button>
-          <button 
-            className={`btn btn-sm ${studyViewMode === 'analytics' ? 'btn-primary' : 'btn-ghost'}`}
-            onClick={() => setStudyViewMode('analytics')}
-            style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }}
-          >
-            ⏱️ Study & Quiz Tracker
-          </button>
-        </div>
+      {/* Main Tab Toggle: Option 1 vs Option 2 */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+        <button 
+          className={`btn ${activeTab === 'study' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setActiveTab('study')}
+          style={{ flex: 1, fontSize: '0.8rem', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+        >
+          📚 Study Notes & Tracker
+        </button>
+        <button 
+          className={`btn ${activeTab === 'manual' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setActiveTab('manual')}
+          style={{ flex: 1, fontSize: '0.8rem', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+        >
+          ⚡ Manual Unit Summarizer
+        </button>
+      </div>
 
-        {/* View Mode 1: Timetable Scheduled Study Materials */}
-        {studyViewMode === 'timetable' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-              💡 displaying scheduled lessons for each subject based on your timetable.
+      {/* OPTION 1: Study Notes & Time Tracker */}
+      {activeTab === 'study' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          
+          {/* Notes list filter bar */}
+          <div className="card" style={{ padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>🔍 Search Notes:</span>
+            <input 
+              className="form-input" 
+              placeholder="Filter study notes content..." 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{ flex: 1, fontSize: '0.78rem', height: '32px', padding: '6px 12px' }}
+            />
+          </div>
+
+          {subjects.length === 0 ? (
+            <div className="card flex-col flex-center text-muted" style={{ padding: '40px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: '2rem' }}>📚</div>
+              <p style={{ fontSize: '0.82rem', marginTop: '8px' }}>No subjects added yet.</p>
+              <Link to="/subjects" className="btn btn-primary btn-sm mt-8">Configure Subjects</Link>
             </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {subjects.map((sub) => {
+                const subId = sub._id || sub.id;
+                const isCurrentStudying = activeSubjectId === subId && isActive;
+                const subColor = sub.color || 'var(--accent-primary)';
+                
+                // Dynamic time of study calculation (database base + active session runtime)
+                const currentFocusSecs = (sub.study_time_seconds || 0) + (isCurrentStudying ? secondsElapsed : 0);
+                const currentFocusFormatted = formatFocusTime(currentFocusSecs);
 
-            {subjects.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '16px 0', color: 'var(--text-muted)' }}>
-                <p style={{ fontSize: '0.8rem' }}>No subjects added. Configure subjects to view study timetables.</p>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', maxHeight: '420px', overflowY: 'auto', paddingRight: '4px' }}>
-                {timetableData.map(({ subject, topic, notes: subNotes }) => {
-                  const subColor = subject.color || 'var(--accent-primary)';
-                  
-                  return (
-                    <div 
-                      key={subject.id || subject._id}
-                      style={{
-                        padding: '12px',
-                        background: 'var(--bg-input)',
-                        borderRadius: 'var(--radius-md)',
-                        borderLeft: `4px solid ${subColor}`
-                      }}
-                    >
-                      <div className="flex-between" style={{ marginBottom: '6px' }}>
-                        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)' }}>{subject.name}</span>
-                        {topic && (
-                          <span className="badge badge-purple" style={{ fontSize: '0.62rem' }}>
-                            Day {topic.day}: {topic.name}
-                          </span>
+                // Calculate deadlines and recommended time estimates
+                const { dailyTarget, daysRemaining, recommendedTimeLeftStr } = getSubjectTimeStats(sub);
+
+                // Fetch notes matching this subject
+                let matchingNotes = notes.filter(n => n.subject.toLowerCase() === sub.name.toLowerCase());
+                if (searchQuery.trim()) {
+                  const query = searchQuery.toLowerCase();
+                  matchingNotes = matchingNotes.filter(n => 
+                    (n.summary || '').toLowerCase().includes(query) || 
+                    (n.generated_notes || '').toLowerCase().includes(query) ||
+                    (n.original_text || '').toLowerCase().includes(query)
+                  );
+                }
+
+                return (
+                  <div 
+                    key={subId}
+                    className="card"
+                    style={{
+                      borderLeft: `4px solid ${subColor}`,
+                      padding: '16px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '14px',
+                      boxShadow: isCurrentStudying ? `0 0 12px ${subColor}25` : 'none',
+                      transition: 'all 0.3s ease'
+                    }}
+                  >
+                    {/* Header Row */}
+                    <div className="flex-between" style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+                      <div>
+                        <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: subColor }}></span>
+                          {sub.name}
+                        </h3>
+                        <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                          Priority: <strong>{sub.priority}</strong>
+                        </p>
+                      </div>
+                      
+                      {/* Live Study Session Trigger */}
+                      <div>
+                        {isCurrentStudying ? (
+                          <button 
+                            className="btn btn-red btn-sm btn-pulse" 
+                            onClick={stopSession}
+                            style={{ fontSize: '0.75rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                          >
+                            ⏹️ Stop Studying
+                          </button>
+                        ) : (
+                          <button 
+                            className="btn btn-outline btn-sm" 
+                            onClick={() => startSession(subId, sub.name)}
+                            style={{ fontSize: '0.75rem', padding: '6px 12px', borderColor: subColor, color: subColor }}
+                          >
+                            📖 Start Studying
+                          </button>
                         )}
                       </div>
+                    </div>
 
-                      {/* Display Syllabus outline */}
-                      <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', margin: '0 0 8px', fontStyle: 'italic' }}>
-                        Outline: {subject.description || 'General curriculum overview.'}
-                      </p>
+                    {/* Time of Study Calculations Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px' }}>
+                      
+                      {/* Calculated Focus Time */}
+                      <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>⏱️ Time of Study</span>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--accent-light)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          {currentFocusFormatted}
+                          {isCurrentStudying && <span className="timer-pulse-dot" style={{ display: 'inline-block' }}></span>}
+                        </div>
+                      </div>
 
-                      {/* Timetable Guides notes */}
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '8px' }}>
-                        <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Available Study Guides ({subNotes.length})</div>
-                        
-                        {subNotes.length === 0 ? (
-                          <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: 0 }}>No summaries saved yet. Use the tool below to generate.</p>
-                        ) : (
-                          subNotes.map((note) => {
+                      {/* Daily Target Duration */}
+                      <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>🎯 Daily Target</span>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
+                          {dailyTarget} mins / day
+                        </div>
+                      </div>
+
+                      {/* Target Deadline */}
+                      <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>🗓️ Target Deadline</span>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
+                          {sub.deadline ? new Date(sub.deadline).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'No Exam Date'}
+                          {daysRemaining !== null && (
+                            <span style={{ display: 'block', fontSize: '0.65rem', color: daysRemaining <= 3 ? '#ef4444' : 'var(--text-muted)', marginTop: '1px' }}>
+                              {daysRemaining > 0 ? `(${daysRemaining} days left)` : daysRemaining === 0 ? '(Exam is TODAY)' : '(Passed)'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Recommended total hours remaining */}
+                      <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>⏳ Recommended Study Left</span>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
+                          {recommendedTimeLeftStr}
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Study Notes List */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        Study Notes & Summaries ({matchingNotes.length})
+                      </div>
+                      
+                      {matchingNotes.length === 0 ? (
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 0 0', fontStyle: 'italic' }}>
+                          No study notes saved for this subject yet. Go to the "Manual Unit Summarizer" tab to generate one.
+                        </p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {matchingNotes.map((note) => {
                             const noteId = note._id || note.id;
                             const isExpanded = !!expandedNotes[noteId];
+                            const isTimeMgmtSummary = note.summary?.includes('Time Management') || note.summary?.includes('Estimated Study Time') || note.summary?.includes('|');
                             
                             return (
-                              <div key={noteId} style={{ background: 'rgba(255,255,255,0.01)', border: '1px solid rgba(255,255,255,0.03)', padding: '8px', borderRadius: '4px', position: 'relative' }}>
+                              <div 
+                                key={noteId} 
+                                style={{ 
+                                  background: 'rgba(255,255,255,0.01)', 
+                                  border: '1px solid var(--border-subtle)', 
+                                  padding: '10px', 
+                                  borderRadius: 'var(--radius-md)', 
+                                  position: 'relative' 
+                                }}
+                              >
                                 <button 
                                   onClick={(e) => handleDeleteNote(noteId, e)}
-                                  style={{ position: 'absolute', top: 6, right: 8, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.72rem' }}
+                                  style={{ position: 'absolute', top: 8, right: 10, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.72rem' }}
+                                  title="Delete note"
                                 >
                                   ✕
                                 </button>
                                 
-                                <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-primary)', paddingRight: '16px' }}>
-                                  {note.type === 'auto_generated' ? '✨ AI Study Guide' : '📝 Uploaded Notes'}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                                    {note.type === 'auto_generated' ? '✨ AI Core Guide' : '📝 Manual Summarized'}
+                                  </span>
+                                  <span className={`badge ${isTimeMgmtSummary ? 'badge-blue' : 'badge-purple'}`} style={{ fontSize: '0.58rem', padding: '1px 5px' }}>
+                                    {isTimeMgmtSummary ? 'Time Management Summary' : 'General Summary'}
+                                  </span>
                                 </div>
-                                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: '4px 0', lineHeight: 1.4, whiteSpace: 'pre-wrap' }}>
+
+                                <div className="markdown-content" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.4, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
                                   {note.summary || note.generated_notes}
-                                </p>
+                                </div>
                                 
                                 {note.original_text && (
-                                  <div>
+                                  <div style={{ marginTop: '8px', borderTop: '1px dashed var(--border-subtle)', paddingTop: '6px' }}>
                                     <button 
                                       className="btn btn-ghost btn-xs" 
                                       onClick={() => toggleExpandNote(noteId)}
-                                      style={{ fontSize: '0.65rem', padding: 0, height: 'auto', color: 'var(--text-muted)', marginTop: '2px' }}
+                                      style={{ fontSize: '0.62rem', padding: 0, height: 'auto', color: 'var(--text-muted)' }}
                                     >
-                                      {isExpanded ? '▼ Hide Source' : '▶ Show Source'}
+                                      {isExpanded ? '▼ Hide Original Unit Text' : '▶ Show Original Unit Text'}
                                     </button>
                                     {isExpanded && (
-                                      <div style={{ marginTop: '4px', padding: '6px', background: 'rgba(0,0,0,0.2)', borderRadius: '4px', fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', maxHeight: '80px', overflowY: 'auto' }}>
+                                      <div style={{ marginTop: '6px', padding: '8px', background: 'rgba(0,0,0,0.15)', borderRadius: '4px', fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', maxHeight: '120px', overflowY: 'auto' }}>
                                         {note.original_text}
                                       </div>
                                     )}
@@ -321,215 +425,217 @@ export default function NotesPage() {
                                 )}
                               </div>
                             );
-                          })
-                        )}
-                      </div>
+                          })}
+                        </div>
+                      )}
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
 
-        {/* View Mode 2: Study Tracker & Quiz Analytics */}
-        {studyViewMode === 'analytics' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
-              📊 Detailed study focus durations and quiz completion metrics per subject.
+                  </div>
+                );
+              })}
             </div>
+          )}
+        </div>
+      )}
+
+      {/* OPTION 2: Manual Unit Summarizer */}
+      {activeTab === 'manual' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          
+          <div className="card" style={{ padding: '16px' }}>
+            <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '4px' }}>⚡ AI Unit Summarizer</h2>
+            <p className="page-subtitle" style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
+              Upload unit notes or paste content. The system will summarize key concepts, estimate mastering times, and prioritize concepts to optimize your study time.
+            </p>
+
+            {error && <div className="auth-error text-xs mb-16">{error}</div>}
 
             {subjects.length === 0 ? (
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textAlign: 'center', padding: '16px 0' }}>Configure subjects to view tracker metrics.</p>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {subjects.map(sub => {
-                  const subColor = sub.color || 'var(--accent-primary)';
-                  
-                  // Calculate time of study
-                  const focusSecs = sub.study_time_seconds || 0;
-                  const focusFormatted = formatFocusTime(focusSecs);
-
-                  // Calculate quiz attempts & last quiz attend time
-                  const subQuizzes = quizzes.filter(q => q.subject.toLowerCase() === sub.name.toLowerCase());
-                  
-                  let lastAttemptTime = 'No quiz taken yet';
-                  let lastScore = null;
-                  
-                  if (subQuizzes.length > 0) {
-                    const attempts = subQuizzes.flatMap(q => q.attempts || []);
-                    if (attempts.length > 0) {
-                      // Sort by attempted_at descending
-                      attempts.sort((a, b) => new Date(b.attempted_at) - new Date(a.attempted_at));
-                      const last = attempts[0];
-                      lastAttemptTime = new Date(last.attempted_at).toLocaleString(undefined, {
-                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                      });
-                      lastScore = Math.round((last.score / last.total) * 100);
-                    }
-                  }
-
-                  return (
-                    <div 
-                      key={sub.id || sub._id}
-                      style={{
-                        padding: '12px',
-                        background: 'var(--bg-input)',
-                        borderRadius: 'var(--radius-md)',
-                        borderLeft: `4px solid ${subColor}`,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '6px'
-                      }}
-                    >
-                      <div className="flex-between">
-                        <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)' }}>{sub.name}</span>
-                        <span className="badge badge-purple" style={{ fontSize: '0.62rem' }}>{sub.priority} Priority</span>
-                      </div>
-
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '4px' }}>
-                        {/* Time of Study */}
-                        <div style={{ background: 'rgba(255,255,255,0.02)', padding: '8px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                          <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>⏱️ Time of Study</div>
-                          <div style={{ fontSize: '0.82rem', fontWeight: 800, color: 'var(--accent-light)', marginTop: '2px' }}>{focusFormatted}</div>
-                        </div>
-
-                        {/* Quiz Attend Time */}
-                        <div style={{ background: 'rgba(255,255,255,0.02)', padding: '8px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.03)' }}>
-                          <div style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>🧩 Quiz Last Attend</div>
-                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={lastAttemptTime}>
-                            {lastAttemptTime}
-                          </div>
-                          {lastScore !== null && (
-                            <span className={`badge ${lastScore >= 80 ? 'badge-green' : 'badge-red'}`} style={{ fontSize: '0.58rem', padding: '1px 4px', marginTop: '4px' }}>
-                              Score: {lastScore}%
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div style={{ textAlign: 'center', padding: '16px 0' }}>
+                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Add a subject category first in settings.</p>
+                <Link to="/subjects" className="btn btn-primary btn-sm mt-8">Configure Subjects</Link>
               </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="flex-col" onDragEnter={handleDrag} style={{ gap: '12px' }}>
+                
+                {/* Subject Selector */}
+                <div className="form-group">
+                  <label className="form-label" htmlFor="summarizer-subject" style={{ fontSize: '0.75rem' }}>Subject Category *</label>
+                  <select 
+                    id="summarizer-subject"
+                    className="form-input" 
+                    value={selectedSubject} 
+                    onChange={(e) => setSelectedSubject(e.target.value)}
+                    style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '38px', padding: '8px 12px' }}
+                    required
+                  >
+                    {subjects.map(s => (
+                      <option key={s._id || s.id} value={s._id || s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Summary Goal Selection: Recommended/Default is Time Management */}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '0.75rem' }}>Summarization Goal</label>
+                  <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
+                      <input 
+                        type="radio" 
+                        name="summaryType" 
+                        value="time_management" 
+                        checked={summaryType === 'time_management'} 
+                        onChange={() => setSummaryType('time_management')} 
+                        style={{ width: '16px', height: '16px' }}
+                      />
+                      <span>(Recommended) Time Management Plan & Key Concepts</span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
+                      <input 
+                        type="radio" 
+                        name="summaryType" 
+                        value="general" 
+                        checked={summaryType === 'general'} 
+                        onChange={() => setSummaryType('general')} 
+                        style={{ width: '16px', height: '16px' }}
+                      />
+                      <span>General Notes Summary</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* File Upload Zone */}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '0.75rem' }}>Upload Unit Document File (PDF, DOCX, TXT, Image)</label>
+                  <div 
+                    className={`flex-col flex-center ${dragActive ? 'drag-active' : ''}`}
+                    onDragEnter={handleDrag}
+                    onDragOver={handleDrag}
+                    onDragLeave={handleDrag}
+                    onDrop={handleDrop}
+                    style={{
+                      border: '1.5px dashed var(--border)',
+                      borderRadius: 'var(--radius-md)',
+                      padding: '14px',
+                      textAlign: 'center',
+                      background: dragActive ? 'rgba(124, 58, 237, 0.05)' : 'var(--bg-input)',
+                      cursor: 'pointer'
+                    }}
+                    onClick={() => document.getElementById('file-upload-input').click()}
+                  >
+                    <div style={{ fontSize: '1.4rem' }}>📁</div>
+                    <div style={{ fontSize: '0.72rem', fontWeight: 600 }}>
+                      {formFile ? `Selected: ${formFile.name}` : 'Drag file here or click to browse'}
+                    </div>
+                    <input 
+                      id="file-upload-input" 
+                      type="file" 
+                      accept=".txt,.md,.pdf,.docx,image/*"
+                      onChange={handleFileChange} 
+                      style={{ display: 'none' }} 
+                    />
+                  </div>
+                </div>
+
+                {/* Raw Text Input */}
+                <div className="form-group">
+                  <label className="form-label" htmlFor="summarizer-content" style={{ fontSize: '0.75rem' }}>Or Paste Unit Content</label>
+                  <textarea 
+                    id="summarizer-content"
+                    className="form-input" 
+                    placeholder="Paste textbook sections, notes, or paragraphs here..."
+                    rows={6}
+                    value={form.text}
+                    onChange={(e) => setForm(f => ({ ...f, text: e.target.value }))}
+                    style={{ fontSize: '0.8rem', padding: '8px 12px' }}
+                    required={!formFile}
+                  />
+                </div>
+
+                {/* Search tags */}
+                <div className="form-group">
+                  <label className="form-label" htmlFor="summarizer-tags" style={{ fontSize: '0.75rem' }}>Optional Tags (comma separated)</label>
+                  <input 
+                    id="summarizer-tags"
+                    className="form-input" 
+                    placeholder="e.g. unit-1, mid-term" 
+                    value={form.tags}
+                    onChange={(e) => setForm(f => ({ ...f, tags: e.target.value }))}
+                    style={{ fontSize: '0.8rem', height: '38px', padding: '8px 12px' }}
+                  />
+                </div>
+
+                <button 
+                  type="submit" 
+                  className={`btn btn-primary btn-full ${loading ? 'btn-loading' : ''}`} 
+                  disabled={loading}
+                  style={{ padding: '10px 16px', fontSize: '0.85rem', marginTop: '6px' }}
+                >
+                  {loading ? 'Analyzing Content...' : '✨ Generate & Save Study Guide'}
+                </button>
+              </form>
             )}
           </div>
-        )}
-      </div>
 
-      {/* SECTION 2: Manual AI Notes Summarizer (Form + Output) */}
-      <div className="card" style={{ padding: '16px' }}>
-        <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '12px' }}>⚡ Summarize Document</h2>
-        
-        {error && <div className="auth-error text-xs mb-16">{error}</div>}
-
-        {subjects.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '16px 0' }}>
-            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Add a subject category first in settings.</p>
-            <Link to="/subjects" className="btn btn-primary btn-sm mt-8">Configure Subjects</Link>
-          </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="flex-col" onDragEnter={handleDrag} style={{ gap: '12px' }}>
-            {/* Subject Selector */}
-            <div className="form-group">
-              <label className="form-label" htmlFor="summarizer-subject" style={{ fontSize: '0.75rem' }}>Subject Category</label>
-              <select 
-                id="summarizer-subject"
-                className="form-input" 
-                value={selectedSubject} 
-                onChange={(e) => setSelectedSubject(e.target.value)}
-                style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '38px', padding: '8px 12px' }}
-              >
-                {subjects.map(s => (
-                  <option key={s._id || s.id} value={s._id || s.id}>{s.name}</option>
+          {/* Live Output Section */}
+          {successData && (
+            <div className="card animate-fade-in flex-col" style={{ gap: '10px', padding: '16px' }}>
+              <div className="flex-between" style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+                <span style={{ fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  🧠 Generated Study Guide: {successData.subject}
+                </span>
+                <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Summarized & Saved</span>
+              </div>
+              
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '4px' }}>
+                {successData.tags.map((t, idx) => (
+                  <span key={idx} className="badge badge-purple" style={{ fontSize: '0.6rem' }}>#{t}</span>
                 ))}
-              </select>
-            </div>
+              </div>
 
-            {/* File Upload Zone */}
-            <div className="form-group">
-              <label className="form-label" style={{ fontSize: '0.75rem' }}>Upload Document File</label>
               <div 
-                className={`flex-col flex-center ${dragActive ? 'drag-active' : ''}`}
-                onDragEnter={handleDrag}
-                onDragOver={handleDrag}
-                onDragLeave={handleDrag}
-                onDrop={handleDrop}
-                style={{
-                  border: '1.5px dashed var(--border)',
+                className="markdown-content" 
+                style={{ 
+                  fontSize: '0.82rem', 
+                  color: 'var(--text-secondary)', 
+                  lineHeight: '1.5', 
+                  whiteSpace: 'pre-wrap', 
+                  margin: '8px 0', 
+                  overflowX: 'auto',
+                  background: 'rgba(0,0,0,0.1)',
+                  padding: '12px',
                   borderRadius: 'var(--radius-md)',
-                  padding: '14px',
-                  textAlign: 'center',
-                  background: dragActive ? 'rgba(124, 58, 237, 0.05)' : 'var(--bg-input)',
-                  cursor: 'pointer'
+                  border: '1px solid var(--border-subtle)'
                 }}
-                onClick={() => document.getElementById('file-upload-input').click()}
               >
-                <div style={{ fontSize: '1.4rem' }}>📁</div>
-                <div style={{ fontSize: '0.72rem', fontWeight: 600 }}>
-                  {formFile ? `Selected: ${formFile.name}` : 'Drag file here or click to browse'}
-                </div>
-                <input 
-                  id="file-upload-input" 
-                  type="file" 
-                  accept=".txt,.md,.pdf,.docx,image/*"
-                  onChange={handleFileChange} 
-                  style={{ display: 'none' }} 
-                />
+                {successData.summary}
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button 
+                  className="btn btn-outline btn-sm" 
+                  onClick={() => {
+                    setActiveTab('study');
+                    setSuccessData(null);
+                  }}
+                  style={{ fontSize: '0.75rem', padding: '6px 12px' }}
+                >
+                  📖 View in Study Tracker
+                </button>
+                <button 
+                  className="btn btn-ghost btn-sm" 
+                  onClick={() => setSuccessData(null)} 
+                  style={{ fontSize: '0.75rem', padding: '6px 12px', color: 'var(--text-muted)' }}
+                >
+                  Clear Output
+                </button>
               </div>
             </div>
+          )}
 
-            {/* Raw Text Input */}
-            <div className="form-group">
-              <label className="form-label" htmlFor="summarizer-content" style={{ fontSize: '0.75rem' }}>Paste Content</label>
-              <textarea 
-                id="summarizer-content"
-                className="form-input" 
-                placeholder="Paste paragraph contents to analyze..."
-                rows={4}
-                value={form.text}
-                onChange={(e) => setForm(f => ({ ...f, text: e.target.value }))}
-                style={{ fontSize: '0.8rem', padding: '8px 12px' }}
-                required
-              />
-            </div>
+        </div>
+      )}
 
-            {/* Search tags */}
-            <div className="form-group">
-              <label className="form-label" htmlFor="summarizer-tags" style={{ fontSize: '0.75rem' }}>Manual Tags (comma separated)</label>
-              <input 
-                id="summarizer-tags"
-                className="form-input" 
-                placeholder="e.g. key-formulas, exam-prep" 
-                value={form.tags}
-                onChange={(e) => setForm(f => ({ ...f, tags: e.target.value }))}
-                style={{ fontSize: '0.8rem', height: '38px', padding: '8px 12px' }}
-              />
-            </div>
-
-            <button 
-              type="submit" 
-              className={`btn btn-primary btn-full ${loading ? 'btn-loading' : ''}`} 
-              disabled={loading}
-              style={{ padding: '10px 16px', fontSize: '0.85rem' }}
-            >
-              {loading ? 'Summarizing...' : '✨ Save & Summarize'}
-            </button>
-          </form>
-        )}
-
-        {/* Live Output Section */}
-        {successData && (
-          <div className="animate-fade-in flex-col" style={{ gap: '8px', marginTop: '16px', padding: '12px', background: 'var(--bg-input)', borderRadius: 'var(--radius-md)' }}>
-            <div className="flex-between">
-              <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Summarized & Saved</span>
-            </div>
-            <p style={{ fontSize: '0.78rem', color: 'var(--text-primary)', lineHeight: '1.5', whiteSpace: 'pre-wrap', margin: 0 }}>
-              {successData.summary}
-            </p>
-            <button className="btn btn-outline btn-xs" onClick={() => setSuccessData(null)} style={{ fontSize: '0.7rem', padding: '4px 8px', alignSelf: 'flex-start' }}>Clear Output</button>
-          </div>
-        )}
-      </div>
     </div>
   );
 }

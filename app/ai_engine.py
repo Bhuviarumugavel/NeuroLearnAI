@@ -13,6 +13,7 @@ import json
 client = OpenAI(
     base_url=OPENROUTER_BASE_URL,
     api_key=OPENAI_API_KEY,
+    timeout=5.0,
 )
 
 MODEL = "google/gemini-2.5-flash"
@@ -60,15 +61,25 @@ def _parse_json_response(content: str):
 # ─────────────────────────────────────────────────────────
 
 def summarize_notes(raw_text: str) -> str:
-    """Raw text -> Bullets / Flashcards / Study Guide / Practice Quiz"""
+    """Raw text -> High-accuracy synthesized study guide."""
     try:
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {"role": "system", "content": "You are a study assistant. Summarize notes into clear, bulleted, efficient study points."},
+                {
+                    "role": "system", 
+                    "content": (
+                        "You are an expert academic tutor and study researcher. Your goal is to synthesize the provided study text with maximum factual accuracy, conceptual depth, and clarity. "
+                        "Do not omit core technical terms, formulas, key dates, or logical arguments. "
+                        "Structure the output into: \n"
+                        "1. **Core Synopsis**: A clear, high-level summary of the entire note.\n"
+                        "2. **Key Concepts & Definitions**: Elaborate on all major terminologies and concepts in the notes.\n"
+                        "3. **Critical Takeaways**: A structured bullet list of the most important points to remember."
+                    )
+                },
                 {"role": "user", "content": raw_text}
             ],
-            max_tokens=1500
+            max_tokens=1800
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -76,8 +87,51 @@ def summarize_notes(raw_text: str) -> str:
         return f"Offline Mock Summary for: {raw_text[:30]}...\n- Key Concept 1\n- Key Concept 2"
 
 
-def summarize_image(base64_image: str, mime_type: str) -> str:
-    """Multimodal Image -> Bullets / Flashcards / Study Guide / Practice Quiz"""
+def summarize_notes_time_management(raw_text: str) -> str:
+    """Summarize text specifically focusing on key concepts, difficulty, and study time management estimation."""
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an elite study strategist and time management coach. Analyze the provided study text and build a highly structured, accurate, and actionable time management study guide.\n\n"
+                        "First, output a clean markdown table matching this format exactly:\n"
+                        "| Core Topic | Key Concept | Difficulty (Low/Medium/Hard) | Estimated Study Time (minutes) | Recommended Technique (e.g. Active Recall, Spaced Repetition, Pomodoro cycles) |\n"
+                        "| --- | --- | --- | --- | --- |\n\n"
+                        "Below the table, provide:\n"
+                        "1. **Detailed Topic Breakdown**: Explaining each core topic clearly and concisely.\n"
+                        "2. **Time Allocation Strategy**: Explaining why certain topics require more time.\n"
+                        "3. **Actionable Study Roadmap**: A step-by-step recommendation on how to distribute study sessions across the week."
+                    ),
+                },
+                {"role": "user", "content": raw_text}
+            ],
+            max_tokens=2000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        # Offline mock fallback
+        return (
+            f"⏱️ **Time Management Summary** (Offline Fallback)\n\n"
+            f"### Key Concepts & Time Estimates\n"
+            f"| Concept | Difficulty | Est. Study Time | Recommended Technique |\n"
+            f"| --- | --- | --- | --- |\n"
+            f"| Foundational Principles | Low | 20 mins | Pomodoro (1 Session) |\n"
+            f"| Advanced Methodologies | Medium | 45 mins | Active Recall Quiz |\n"
+            f"| Practical Exercises | Hard | 60 mins | Spaced Repetition / Practice problems |\n\n"
+            f"**Total Recommended Study Duration:** 2 Hours 5 Minutes."
+        )
+
+
+def summarize_image(base64_image: str, mime_type: str, summary_type: str = "general") -> str:
+    """Multimodal Image -> Bullets / Flashcards / Study Guide / Practice Quiz / Time Management Summary"""
+    system_prompt = (
+        "Extract all study notes, definitions, explanations, formulas, diagrams and text from this image and structure them into a comprehensive, clear, bulleted study guide."
+        if summary_type != "time_management" else
+        "Extract all study notes and concepts from this image and summarize them into a time management study guide. Focus on: 1. Key Concepts, 2. Difficulty Rating (Low/Medium/Hard), 3. Estimated Study Time (in minutes) to master each topic, 4. Recommended Study Techniques. Format as a clean markdown table or structured checklist."
+    )
     try:
         response = client.chat.completions.create(
             model=MODEL,
@@ -87,7 +141,7 @@ def summarize_image(base64_image: str, mime_type: str) -> str:
                     "content": [
                         {
                             "type": "text",
-                            "text": "Extract all study notes, definitions, explanations, formulas, diagrams and text from this image and structure them into a comprehensive, clear, bulleted study guide."
+                            "text": system_prompt
                         },
                         {
                             "type": "image_url",
@@ -194,11 +248,11 @@ def generate_study_plan(description: str, subject_name: str, deadline: str, dail
                 {
                     "role": "system",
                     "content": (
-                        "You are a study planner AI. Create a detailed day-wise study plan based on the subject description. "
-                        "Return ONLY a valid JSON array of objects, each with: "
-                        '{"name": "Topic Name", "day": 1, "duration": 60}. '
-                        "Distribute topics logically, include a revision day at the end. "
-                        "Do not include any text outside the JSON array."
+                        "You are a professional study planner AI and curriculum developer. Create a detailed day-wise study plan based on the subject description.\n"
+                        "Break the syllabus down logically into sequential study topics.\n"
+                        "Avoid generic placeholders. Instead, extract real sub-topics and concepts relevant to the subject.\n"
+                        "Return ONLY a valid JSON array of objects (no markdown blocks, no backticks, no comments), each matching this schema exactly:\n"
+                        '{"name": "Specific Topic Name", "day": 1, "duration": 60}'
                     ),
                 },
                 {
@@ -207,8 +261,8 @@ def generate_study_plan(description: str, subject_name: str, deadline: str, dail
                         f"Subject: {subject_name}\n"
                         f"Description: {description}\n"
                         f"Deadline: {deadline}\n"
-                        f"Daily study time: {daily_minutes} minutes\n\n"
-                        "Generate a JSON array of study topics."
+                        f"Daily study target time: {daily_minutes} minutes\n\n"
+                        "Generate study plan JSON array."
                     ),
                 },
             ],
@@ -232,23 +286,37 @@ def generate_study_plan(description: str, subject_name: str, deadline: str, dail
             days = 7
 
         fallback_topics = []
-        # Basic list of key topics to cover
-        core_topics = [
-            "Introduction and Fundamental Terminology",
-            "Core Concepts, Principles & Methodologies",
-            "Practical Implementations & Lab Demonstrations",
-            "Advanced Case Studies & Multi-domain Integration",
-            "Troubleshooting, Edge Cases & Performance Tuning",
-            "Practice Problems, Assessments & Active Recall Quiz",
-            "Comprehensive Final Revision & Practice Exam"
-        ]
+        # Dynamic fallback topics based on subject name and description
+        desc_parts = [p.strip() for p in description.replace(",", ".").split(".") if len(p.strip()) > 5]
+        
+        core_topics = []
+        if len(desc_parts) >= 3:
+            core_topics = [
+                f"Introduction to {subject_name} Foundations",
+                f"Core Study: {desc_parts[0]}",
+                f"Deep Dive: {desc_parts[1]}",
+                f"Practical Application: {desc_parts[2]}",
+                f"Advanced Integration of {subject_name} concepts",
+                f"Active Recall, Flashcards & Practice Quiz",
+                f"Final Revision and Mock Testing for {subject_name}"
+            ]
+        else:
+            core_topics = [
+                f"Introduction and Fundamental Vocabulary in {subject_name}",
+                f"Core Theories & Methodologies of {subject_name}",
+                f"Practical Lab Demonstrations & Implementations",
+                f"Advanced Case Studies and Concept Synthesis",
+                f"Edge Cases, Troubleshooting & Optimization",
+                f"Active Recall Quiz & Self Assessment",
+                f"Final Study Plan Revision & Exam Prep"
+            ]
 
         for d in range(1, days + 1):
             if d == days:
                 topic_name = f"Final Review & Comprehensive Study Session for {subject_name}"
             else:
                 topic_idx = (d - 1) % len(core_topics)
-                topic_name = f"{core_topics[topic_idx]} ({subject_name})"
+                topic_name = core_topics[topic_idx]
             fallback_topics.append({
                 "name": topic_name,
                 "day": d,

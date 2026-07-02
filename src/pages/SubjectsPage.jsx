@@ -31,6 +31,30 @@ export default function SubjectsPage() {
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
+  // Form state for editing an existing subject
+  const [editForm, setEditForm] = useState({
+    name: '',
+    description: '',
+    color: COLORS[0],
+    priority: 'Medium',
+    deadline: '',
+    daily_study_minutes: 45
+  });
+
+  // Sync editForm state when activeSub changes
+  useEffect(() => {
+    if (activeSub) {
+      setEditForm({
+        name: activeSub.name || '',
+        description: activeSub.description || '',
+        color: activeSub.color || COLORS[0],
+        priority: activeSub.priority || 'Medium',
+        deadline: activeSub.deadline || '',
+        daily_study_minutes: activeSub.daily_study_minutes || 45
+      });
+    }
+  }, [selectedSubId, activeSub]);
+
   // Auto-select first subject in list on load
   useEffect(() => {
     if (subjects.length > 0 && !selectedSubId) {
@@ -124,7 +148,7 @@ export default function SubjectsPage() {
     e.preventDefault();
     if (!activeSub) return;
 
-    if (!activeSub.description || !activeSub.description.trim()) {
+    if (!editForm.description || !editForm.description.trim()) {
       setError('Description is required.');
       return;
     }
@@ -134,12 +158,12 @@ export default function SubjectsPage() {
     setSuccessMsg('');
     try {
       await api.put(`/api/subjects/${selectedSubId}`, {
-        name: activeSub.name,
-        description: activeSub.description,
-        color: activeSub.color,
-        priority: activeSub.priority,
-        deadline: activeSub.deadline,
-        daily_study_minutes: Number(activeSub.daily_study_minutes)
+        name: editForm.name,
+        description: editForm.description,
+        color: editForm.color,
+        priority: editForm.priority,
+        deadline: editForm.deadline || null,
+        daily_study_minutes: Number(editForm.daily_study_minutes)
       });
       setSuccessMsg('Settings updated successfully!');
       await Promise.all([refreshSubjects(), refreshSummary()]);
@@ -361,10 +385,9 @@ export default function SubjectsPage() {
                     <label className="form-label" style={{ fontSize: '0.72rem' }}>Subject Name</label>
                     <input 
                       className="form-input" 
-                      value={activeSub.name} 
+                      value={editForm.name} 
                       onChange={(e) => {
-                        const val = e.target.value;
-                        refreshSubjects(); // sync
+                        setEditForm(prev => ({ ...prev, name: e.target.value }));
                       }} 
                       required 
                       disabled
@@ -375,11 +398,9 @@ export default function SubjectsPage() {
                     <label className="form-label" style={{ fontSize: '0.72rem' }}>Description / Syllabus *</label>
                     <textarea 
                       className="form-input" 
-                      value={activeSub.description || ''} 
+                      value={editForm.description} 
                       onChange={(e) => {
-                        const val = e.target.value;
-                        // local mutate, then save on submit
-                        activeSub.description = val;
+                        setEditForm(prev => ({ ...prev, description: e.target.value }));
                       }} 
                       rows={3}
                       required
@@ -391,9 +412,9 @@ export default function SubjectsPage() {
                     <label className="form-label" style={{ fontSize: '0.72rem' }}>Priority Level</label>
                     <select 
                       className="form-input"
-                      value={activeSub.priority || 'Medium'}
+                      value={editForm.priority}
                       onChange={(e) => {
-                        activeSub.priority = e.target.value;
+                        setEditForm(prev => ({ ...prev, priority: e.target.value }));
                       }}
                       style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
                     >
@@ -405,9 +426,9 @@ export default function SubjectsPage() {
                     <input 
                       type="date" 
                       className="form-input" 
-                      value={activeSub.deadline || ''} 
+                      value={editForm.deadline} 
                       onChange={(e) => {
-                        activeSub.deadline = e.target.value;
+                        setEditForm(prev => ({ ...prev, deadline: e.target.value }));
                       }} 
                       style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
                     />
@@ -419,9 +440,9 @@ export default function SubjectsPage() {
                       type="number" 
                       className="form-input" 
                       min={5} 
-                      value={activeSub.daily_study_minutes || 45} 
+                      value={editForm.daily_study_minutes} 
                       onChange={(e) => {
-                        activeSub.daily_study_minutes = Number(e.target.value);
+                        setEditForm(prev => ({ ...prev, daily_study_minutes: Number(e.target.value) }));
                       }} 
                       style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
                     />
@@ -435,9 +456,9 @@ export default function SubjectsPage() {
                           key={c} 
                           type="button" 
                           onClick={() => {
-                            activeSub.color = c;
+                            setEditForm(prev => ({ ...prev, color: c }));
                           }}
-                          style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: activeSub.color === c ? '2px solid #fff' : '1px solid transparent', cursor: 'pointer' }} 
+                          style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: editForm.color === c ? '2px solid #fff' : '1px solid transparent', cursor: 'pointer' }} 
                         />
                       ))}
                     </div>

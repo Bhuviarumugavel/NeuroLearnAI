@@ -5,7 +5,7 @@ from bson import ObjectId
 from app.database import notes_collection
 from app.models.note import create_note_document
 from app.schemas.note import NoteCreate, NoteUpdate, AutoNotesRequest
-from app.ai_engine import summarize_notes, generate_automatic_notes, summarize_image
+from app.ai_engine import summarize_notes, generate_automatic_notes, summarize_image, summarize_notes_time_management
 from app.middleware.auth import get_current_user, get_current_user_optional
 
 router = APIRouter(prefix="/api/notes", tags=["Notes"])
@@ -29,7 +29,11 @@ async def create_note(
     user_id = user["_id"] if user else "anonymous"
 
     # AI summarization
-    summary = summarize_notes(request.text)
+    summary_type = getattr(request, "summary_type", "general")
+    if summary_type == "time_management":
+        summary = summarize_notes_time_management(request.text)
+    else:
+        summary = summarize_notes(request.text)
 
     # Build document
     note_doc = create_note_document(
@@ -198,6 +202,7 @@ async def auto_generate_notes(
 async def upload_file_notes(
     file: UploadFile = File(...),
     subject_tag: str = Form(...),
+    summary_type: str = Form("general"),
     user: dict = Depends(get_current_user_optional),
 ):
     """Upload a TXT, PDF, DOCX, or Image file to extract text & generate AI summary."""
@@ -263,7 +268,7 @@ async def upload_file_notes(
             # Determine appropriate mime type if not present or generic
             mime = content_type if content_type.startswith("image/") else "image/png"
             base64_data = base64.b64encode(file_bytes).decode('utf-8')
-            summary = summarize_image(base64_data, mime)
+            summary = summarize_image(base64_data, mime, summary_type)
             text = "Uploaded image notes (Summarized directly via multimodal AI)"
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Failed to process image: {str(e)}")
@@ -278,7 +283,10 @@ async def upload_file_notes(
     if not summary:
         if not text.strip():
             raise HTTPException(status_code=400, detail="The uploaded file contains no readable text.")
-        summary = summarize_notes(text)
+        if summary_type == "time_management":
+            summary = summarize_notes_time_management(text)
+        else:
+            summary = summarize_notes(text)
 
     # Build document & persist to MongoDB
     note_doc = create_note_document(

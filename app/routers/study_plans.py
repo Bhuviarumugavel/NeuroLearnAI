@@ -110,13 +110,37 @@ async def list_plans(user: dict = Depends(get_current_user_optional)):
                 plan_deadline = sub.get("deadline") or datetime.now(timezone.utc).isoformat().split('T')[0]
                 daily_minutes = sub.get("daily_study_minutes") or 45
                 
-                # Trigger AI generation
-                topics_raw = generate_study_plan(
-                    plan_desc,
-                    sub_name,
-                    plan_deadline,
-                    daily_minutes,
-                )
+                # Generate local study plan directly to avoid blocking AI engine calls on list views
+                try:
+                    deadline_str = plan_deadline.split('T')[0] if plan_deadline else ""
+                    deadline_date = datetime.strptime(deadline_str, "%Y-%m-%d")
+                    delta = deadline_date - datetime.now()
+                    days = max(1, min(30, delta.days))
+                except Exception:
+                    days = 7
+
+                topics_raw = []
+                core_topics = [
+                    "Introduction and Fundamental Terminology",
+                    "Core Concepts, Principles & Methodologies",
+                    "Practical Implementations & Lab Demonstrations",
+                    "Advanced Case Studies & Multi-domain Integration",
+                    "Troubleshooting, Edge Cases & Performance Tuning",
+                    "Practice Problems, Assessments & Active Recall Quiz",
+                    "Comprehensive Final Revision & Practice Exam"
+                ]
+
+                for d in range(1, days + 1):
+                    if d == days:
+                        topic_name = f"Final Review & Comprehensive Study Session for {sub_name}"
+                    else:
+                        topic_idx = (d - 1) % len(core_topics)
+                        topic_name = f"{core_topics[topic_idx]} ({sub_name})"
+                    topics_raw.append({
+                        "name": topic_name,
+                        "day": d,
+                        "duration": daily_minutes or 45
+                    })
                 
                 if topics_raw is None:
                     topics_raw = []

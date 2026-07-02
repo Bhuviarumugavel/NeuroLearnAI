@@ -49,6 +49,11 @@ async def schedule_reminder(
 
     # Attempt Celery task, fallback to local
     try:
+        import redis
+        from app.config import REDIS_URL
+        r_client = redis.Redis.from_url(REDIS_URL, socket_timeout=1.0, socket_connect_timeout=1.0)
+        r_client.ping()
+
         trigger_study_reminder.delay(user_id, request.message)
         method = "celery_redis"
     except Exception:

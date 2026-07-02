@@ -71,9 +71,13 @@ export default function QuizPage() {
   const [scoreData, setScoreData] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Pre-select first subject in list
+  // Pre-select first subject in list or load from URL query params
   useEffect(() => {
-    if (subjects.length > 0 && !selectedSubjectId) {
+    const params = new URLSearchParams(window.location.search);
+    const subParam = params.get('subject');
+    if (subParam && subjects.some(s => (s._id || s.id) === subParam)) {
+      setSelectedSubjectId(subParam);
+    } else if (subjects.length > 0 && !selectedSubjectId) {
       setSelectedSubjectId(subjects[0]._id || subjects[0].id);
     }
   }, [subjects, selectedSubjectId]);
