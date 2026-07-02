@@ -1,11 +1,12 @@
 """Study plans router — AI generation, CRUD, and progress tracking."""
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from datetime import datetime, timezone
 from bson import ObjectId
-from app.database import study_plans_collection, subjects_collection
+from app.database import study_plans_collection, subjects_collection, notes_collection
 from app.models.study_plan import create_study_plan_document
+from app.models.note import create_note_document
 from app.schemas.study_plan import StudyPlanGenerate, StudyPlanProgressUpdate
-from app.ai_engine import generate_study_plan
+from app.ai_engine import generate_study_plan, search_duckduckgo_snippets, generate_notes_for_topic
 from app.middleware.auth import get_current_user_optional
 
 router = APIRouter(prefix="/api/study-plans", tags=["Study Plans"])
@@ -17,11 +18,57 @@ def serialize_doc(doc: dict) -> dict:
     return doc
 
 
+async def generate_all_topic_notes_task(user_id: str, subject_name: str, topics: list, user_email: str = None):
+    """Background task to generate detailed study notes for each study plan topic with web context."""
+    print(f"[BG-TASK] Starting notes generation for {len(topics)} topics in subject {subject_name}")
+    for topic in topics:
+        topic_name = topic.get("name")
+        if not topic_name:
+            continue
+
+        # Avoid duplicates
+        existing = await notes_collection.find_one({
+            "user_id": user_id,
+            "subject": subject_name,
+            "description": f"Study plan topic: {topic_name}"
+        })
+        if existing:
+            continue
+
+        # Gather web content
+        query = f"{subject_name} {topic_name}"
+        web_context = ""
+        try:
+            web_context = await search_duckduckgo_snippets(query, user_email or "anonymous@example.com")
+        except Exception as ex:
+            print(f"[BG-TASK] Failed web search for {topic_name}: {ex}")
+
+        # Call AI
+        try:
+            notes_text = generate_notes_for_topic(topic_name, subject_name, web_context)
+            note_doc = create_note_document(
+                user_id=user_id,
+                subject_tag=subject_name,
+                original_text="",
+                summary=notes_text,
+                note_type="auto_generated",
+                subject_name=subject_name,
+                description=f"Study plan topic: {topic_name}",
+                generated_notes=notes_text,
+            )
+            note_doc["created_at"] = datetime.now(timezone.utc).isoformat()
+            await notes_collection.insert_one(note_doc)
+            print(f"[BG-TASK] Generated notes for: {topic_name}")
+        except Exception as ex:
+            print(f"[BG-TASK] AI generation failed for {topic_name}: {ex}")
+
+
 # ── POST /api/study-plans/generate ───────────────────────
 
 @router.post("/generate")
 async def generate_plan(
     request: StudyPlanGenerate,
+    bg_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user_optional),
 ):
     """Generate an AI-powered day-wise study plan."""
@@ -67,6 +114,16 @@ async def generate_plan(
     except Exception:
         plan_id = "offline"
 
+    # Enqueue background task to generate day-wise notes
+    user_email = user.get("email") if user else None
+    bg_tasks.add_task(
+        generate_all_topic_notes_task,
+        user_id,
+        request.subject_name,
+        topics,
+        user_email
+    )
+
     return {
         "status": "success",
         "plan_id": plan_id,
@@ -80,7 +137,10 @@ async def generate_plan(
 # ── GET /api/study-plans/ ────────────────────────────────
 
 @router.get("/")
-async def list_plans(user: dict = Depends(get_current_user_optional)):
+async def list_plans(
+    bg_tasks: BackgroundTasks,
+    user: dict = Depends(get_current_user_optional)
+):
     """List all study plans for the current user, auto-generating if missing."""
     user_id = user["_id"] if user else "anonymous"
 
@@ -179,6 +239,16 @@ async def list_plans(user: dict = Depends(get_current_user_optional)):
                 else:
                     # Insert new plan
                     await study_plans_collection.insert_one(plan_doc)
+                
+                # Enqueue background task to generate day-wise notes
+                user_email = user.get("email") if user else None
+                bg_tasks.add_task(
+                    generate_all_topic_notes_task,
+                    user_id,
+                    sub_name,
+                    topics,
+                    user_email
+                )
                 
                 updated_plans = True
 

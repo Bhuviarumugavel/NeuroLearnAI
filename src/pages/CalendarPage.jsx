@@ -1,9 +1,6 @@
 /**
- * CalendarPage.jsx — Interactive Calendar Page.
- * Displays exam dates, study schedule topics, and custom study alerts.
- * Restructured to:
- * 1. Support showing the daily topic, and the relevant study notes & quizzes based on the topic of the day.
- * 2. Optimize state management using global DataContext.
+ * CalendarPage.jsx — Interactive Vertical Calendar Page.
+ * Displays exam dates, study schedule topics, and custom study alerts vertically.
  */
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
@@ -134,7 +131,6 @@ export default function CalendarPage() {
   const month = currentDate.getMonth();
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const firstDayIndex = new Date(year, month, 1).getDay();
   
   const monthNames = [
     "January", "February", "March", "April", "May", "June",
@@ -147,12 +143,8 @@ export default function CalendarPage() {
     return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
   };
 
-  // Generate date grid cells
-  const cells = [];
-  for (let i = 0; i < firstDayIndex; i++) {
-    cells.push({ day: null, key: `prev-${i}`, classNames: 'calendar-day different-month' });
-  }
-
+  // Generate day items for vertical timeline
+  const verticalDays = [];
   for (let day = 1; day <= daysInMonth; day++) {
     const today = new Date();
     const isToday = today.getDate() === day && today.getMonth() === month && today.getFullYear() === year;
@@ -177,18 +169,16 @@ export default function CalendarPage() {
       });
     });
 
-    cells.push({
+    verticalDays.push({
       day,
       dateStr: formattedDateStr,
-      key: `active-${day}`,
-      classNames: `calendar-day ${isToday ? 'today' : ''} ${isSelected ? 'selected-day-cell' : ''}`,
+      isToday,
+      isSelected,
       deadlines: dayDeadlines,
       reminders: dayReminders,
       topics: dayTopics
     });
   }
-
-  const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
   // Selected Day Details calculation
   const getSelectedDayDetails = () => {
@@ -237,12 +227,12 @@ export default function CalendarPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <button className="btn btn-outline btn-sm" onClick={() => setCurrentDate(new Date(year, month - 1, 1))} style={{ padding: '4px 8px', fontSize: '0.72rem' }}>◀</button>
             <span style={{ fontFamily: 'Outfit', fontWeight: 700, fontSize: '0.88rem', minWidth: '90px', textAlign: 'center' }}>
-              {monthNames[month].slice(0,3)} {year}
+              {monthNames[month]} {year}
             </span>
             <button className="btn btn-outline btn-sm" onClick={() => setCurrentDate(new Date(year, month + 1, 1))} style={{ padding: '4px 8px', fontSize: '0.72rem' }}>▶</button>
           </div>
         </div>
-        <p className="page-subtitle" style={{ fontSize: '0.78rem', margin: 0 }}>Click a day to view its detailed study topics, notes, and practice quizzes below.</p>
+        <p className="page-subtitle" style={{ fontSize: '0.78rem', margin: 0 }}>Timeline scheduler showing scheduled subject study topics day-wise.</p>
       </div>
 
       {loadingLocal ? (
@@ -250,128 +240,189 @@ export default function CalendarPage() {
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
-          {/* Calendar Grid Container */}
-          <div className="card" style={{ padding: '8px', overflow: 'hidden' }}>
-            {/* Weekday headers */}
-            <div className="calendar-grid" style={{ gridTemplateRows: 'auto' }}>
-              {weekdays.map(d => (
-                <div key={d} className="calendar-day-header" style={{ padding: '6px 4px', fontSize: '0.7rem' }}>{d}</div>
-              ))}
-            </div>
+          {/* Vertical Calendar Scroll Area */}
+          <div 
+            style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: '10px', 
+              maxHeight: '480px', 
+              overflowY: 'auto', 
+              paddingRight: '6px',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: '12px',
+              background: 'rgba(255,255,255,0.01)'
+            }}
+          >
+            {verticalDays.map((c) => {
+              const dateObj = new Date(`${c.dateStr}T00:00:00`);
+              const weekdayStr = dateObj.toLocaleDateString(undefined, { weekday: 'short' });
+              
+              return (
+                <div
+                  key={c.dateStr}
+                  onClick={() => handleCellClick(c.dateStr)}
+                  style={{
+                    display: 'flex',
+                    gap: '12px',
+                    padding: '10px 12px',
+                    background: c.isSelected ? 'rgba(124, 58, 237, 0.08)' : 'var(--bg-input)',
+                    border: `1px solid ${c.isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                    borderRadius: 'var(--radius-md)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                    boxShadow: c.isSelected ? '0 0 10px rgba(124, 58, 237, 0.12)' : 'none',
+                    position: 'relative'
+                  }}
+                >
+                  {/* Left Column: Date Stamp */}
+                  <div style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    minWidth: '50px',
+                    height: '50px',
+                    borderRadius: '8px',
+                    background: c.isToday ? 'var(--accent-primary)' : 'rgba(255,255,255,0.02)',
+                    border: `1px solid ${c.isToday ? 'var(--accent-primary)' : 'var(--border-subtle)'}`,
+                    color: c.isToday ? '#fff' : 'var(--text-primary)',
+                  }}>
+                    <span style={{ fontSize: '0.58rem', fontWeight: 600, textTransform: 'uppercase', opacity: 0.8 }}>{weekdayStr}</span>
+                    <span style={{ fontSize: '1.05rem', fontWeight: 800 }}>{c.day}</span>
+                  </div>
 
-            {/* Monthly Day cells */}
-            <div className="calendar-grid" style={{ gridAutoRows: 'minmax(72px, auto)' }}>
-              {cells.map((c) => {
-                const isSelected = c.dateStr === selectedDateStr;
-                return (
-                  <div 
-                    key={c.key} 
-                    className={c.classNames}
-                    onClick={() => c.day && handleCellClick(c.dateStr)}
-                    style={{ 
-                      cursor: c.day ? 'pointer' : 'default', 
-                      padding: '4px', 
-                      minHeight: '80px',
-                      border: isSelected ? '2px solid var(--accent-primary)' : '1px solid rgba(255,255,255,0.03)',
-                      background: isSelected ? 'rgba(124, 58, 237, 0.05)' : '',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    {c.day && (
-                      <>
-                        <div className="calendar-day-number" style={{ fontSize: '0.72rem', fontWeight: isSelected ? 700 : 500 }}>{c.day}</div>
-                        
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', marginTop: '4px' }}>
-                          {/* Exams */}
-                          {c.deadlines?.map(sub => (
-                            <div 
-                              key={sub.id || sub._id} 
-                              className="calendar-event"
-                              style={{ background: sub.color || 'var(--accent-primary)', fontSize: '0.58rem', padding: '1px 3px', borderRadius: '2px' }}
-                              title={`Exam: ${sub.name}`}
-                            >
-                              📚 {sub.name.slice(0, 8)}..
-                            </div>
-                          ))}
+                  {/* Middle Column: Visual details for daily schedule */}
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '4px', justifyContent: 'center' }}>
+                    
+                    {/* Exam deadlines */}
+                    {c.deadlines.map(sub => (
+                      <div 
+                        key={sub.id || sub._id} 
+                        style={{ 
+                          background: 'rgba(239, 68, 68, 0.12)', 
+                          border: '1px solid #ef4444', 
+                          color: '#ef4444', 
+                          fontSize: '0.62rem', 
+                          padding: '2px 6px', 
+                          borderRadius: '3px',
+                          fontWeight: 700,
+                          width: 'fit-content'
+                        }}
+                      >
+                        📚 EXAM DEADLINE: {sub.name}
+                      </div>
+                    ))}
+
+                    {/* Custom Alert/Reminders */}
+                    {c.reminders.map((rem, idx) => (
+                      <div 
+                        key={idx} 
+                        style={{ 
+                          background: 'rgba(245, 158, 11, 0.12)', 
+                          border: '1px solid var(--accent-orange)', 
+                          color: 'var(--accent-orange)', 
+                          fontSize: '0.62rem', 
+                          padding: '2px 6px', 
+                          borderRadius: '3px',
+                          fontWeight: 600,
+                          width: 'fit-content'
+                        }}
+                      >
+                        🔔 ALERT: {rem.message}
+                      </div>
+                    ))}
+
+                    {/* Subject Topics scheduled */}
+                    {c.topics.length === 0 ? (
+                      <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        No study topics scheduled.
+                      </span>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        {c.topics.map((topic, tIdx) => {
+                          const matchedSub = subjects.find(s => s.name.toLowerCase() === topic.subjectName.toLowerCase());
+                          const subColor = matchedSub?.color || 'var(--accent-primary)';
                           
-                          {/* Study Plan Topics */}
-                          {c.topics?.map((topic, idx) => {
-                            const matchedSub = subjects.find(s => s.name.toLowerCase() === topic.subjectName.toLowerCase());
-                            const subColor = matchedSub?.color || 'var(--accent-primary)';
-                            
-                            return (
-                              <div 
-                                key={idx} 
-                                style={{ 
-                                  display: 'flex', 
-                                  alignItems: 'center', 
-                                  gap: '2px', 
-                                  fontSize: '0.55rem', 
-                                  background: 'rgba(255, 255, 255, 0.03)', 
-                                  borderLeft: `2px solid ${subColor}`,
-                                  padding: '1px 2px', 
-                                  borderRadius: '1px', 
+                          return (
+                            <div 
+                              key={tIdx}
+                              style={{
+                                padding: '6px 8px',
+                                background: 'rgba(0,0,0,0.12)',
+                                borderLeft: `3px solid ${subColor}`,
+                                borderRadius: '3px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '8px'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <input 
+                                  type="checkbox" 
+                                  checked={topic.completed}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    handleToggleTopic(topic.planId, topic.topicIndex, topic.completed);
+                                  }}
+                                  style={{ width: '13px', height: '13px', cursor: 'pointer' }}
+                                />
+                                <span style={{ 
+                                  fontSize: '0.75rem', 
+                                  fontWeight: 600,
                                   color: topic.completed ? 'var(--text-muted)' : 'var(--text-primary)',
                                   textDecoration: topic.completed ? 'line-through' : 'none'
-                                }} 
-                                title={`Topic: ${topic.name}`}
-                              >
-                                <span style={{ textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>{topic.name}</span>
+                                }}>
+                                  {topic.name}
+                                </span>
                               </div>
-                            );
-                          })}
-                          
-                          {/* Custom Reminders */}
-                          {c.reminders?.map((rem, idx) => (
-                            <div 
-                              key={idx} 
-                              className="calendar-event"
-                              style={{ background: 'rgba(245, 158, 11, 0.75)', border: '1px solid var(--accent-orange)', fontSize: '0.58rem', padding: '1px 3px', borderRadius: '2px' }}
-                              title={`Event: ${rem.message}`}
-                            >
-                              🔔 {rem.message.slice(0, 8)}..
+                              <span style={{ fontSize: '0.6rem', color: subColor, fontWeight: 700 }}>
+                                {topic.subjectName} ({topic.duration}m)
+                              </span>
                             </div>
-                          ))}
-                        </div>
-                      </>
+                          );
+                        })}
+                      </div>
                     )}
                   </div>
-                );
-              })}
-            </div>
-          </div>
 
-          {/* Legend */}
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center', fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: 'var(--accent-primary)', display: 'inline-block' }}></span>
-              Exam/Deadline
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '2px', background: 'rgba(245, 158, 11, 0.7)', display: 'inline-block' }}></span>
-              Custom Alerts
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '2px', border: '1px solid var(--accent-primary)', display: 'inline-block' }}></span>
-              Selected Day
-            </div>
+                  {/* Right Column: Actions */}
+                  <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '4px' }}>
+                    <button 
+                      className="btn btn-outline btn-xs" 
+                      onClick={(e) => { e.stopPropagation(); openActionModal('event', c.dateStr); }}
+                      style={{ fontSize: '0.6rem', padding: '2px 5px' }}
+                    >
+                      + Alert
+                    </button>
+                    <button 
+                      className="btn btn-outline btn-xs" 
+                      onClick={(e) => { e.stopPropagation(); openActionModal('deadline', c.dateStr); }}
+                      style={{ fontSize: '0.6rem', padding: '2px 5px' }}
+                    >
+                      Set Exam
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           {/* 🔍 STUDY CENTER DETAIL CARD (Topics, Notes & Quizzes for selected day) */}
           <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
             
-            {/* Detail Card Header */}
             <div className="flex-between" style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '10px' }}>
               <div>
                 <h2 style={{ fontSize: '1rem', fontWeight: 700, margin: 0 }}>
                   📖 Study Center: {selectedDayInfo.formattedDateStr}
                 </h2>
                 <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
-                  Complete study modules scheduled for this day
+                  Study notes and practice resources for this day
                 </p>
               </div>
 
-              {/* Action Buttons */}
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button 
                   className="btn btn-outline btn-xs" 
@@ -385,15 +436,14 @@ export default function CalendarPage() {
                   onClick={() => openActionModal('deadline', selectedDayInfo.dateStr)}
                   style={{ fontSize: '0.68rem', padding: '4px 8px' }}
                 >
-                  ⚙️ Reschedule Deadline
+                  ⚙️ Reschedule Exam
                 </button>
               </div>
             </div>
 
-            {/* Custom Day Reminders/Alerts List */}
             {selectedDayInfo.reminders.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', background: 'rgba(245, 158, 11, 0.05)', border: '1px solid rgba(245, 158, 11, 0.15)', padding: '10px', borderRadius: 'var(--radius-md)' }}>
-                <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--accent-orange)', textTransform: 'uppercase' }}>🔔 Custom Alerts for Today:</div>
+                <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--accent-orange)', textTransform: 'uppercase' }}>🔔 Custom Alerts:</div>
                 <ul style={{ margin: 0, paddingLeft: '16px', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                   {selectedDayInfo.reminders.map((rem, idx) => (
                     <li key={idx} style={{ marginBottom: '2px' }}>{rem.message}</li>
@@ -402,10 +452,9 @@ export default function CalendarPage() {
               </div>
             )}
 
-            {/* Topics List with Notes & Quizzes */}
             {selectedDayInfo.topics.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)' }}>
-                <p style={{ fontSize: '0.8rem', margin: 0 }}>No study plan topics scheduled for this date.</p>
+                <p style={{ fontSize: '0.8rem', margin: 0 }}>No study topics scheduled for this date. Click another date in the timeline to view notes.</p>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -414,10 +463,18 @@ export default function CalendarPage() {
                   const subColor = matchedSub?.color || 'var(--accent-primary)';
                   const subId = matchedSub?._id || matchedSub?.id || '';
 
-                  // Filter study notes relevant to this subject
-                  const subjectNotes = notes.filter(n => n.subject.toLowerCase() === topic.subjectName.toLowerCase());
+                  // Filter study notes matching the specific topic name or general subject notes
+                  let subjectNotes = notes.filter(n => n.subject.toLowerCase() === topic.subjectName.toLowerCase());
+                  const topicKeyword = topic.name.toLowerCase();
+                  const topicNotes = subjectNotes.filter(n => 
+                    (n.summary || '').toLowerCase().includes(topicKeyword) ||
+                    (n.description || '').toLowerCase().includes(topicKeyword)
+                  );
+                  if (topicNotes.length > 0) {
+                    subjectNotes = topicNotes;
+                  }
 
-                  // Filter quizzes relevant to this subject
+                  // Quizzes
                   const subjectQuizzes = quizzes.filter(q => q.subject.toLowerCase() === topic.subjectName.toLowerCase());
                   const quizAttempts = subjectQuizzes.flatMap(q => q.attempts || []);
                   const highQuizScore = quizAttempts.length > 0 ? Math.max(...quizAttempts.map(a => Math.round((a.score / a.total) * 100))) : null;
@@ -435,7 +492,6 @@ export default function CalendarPage() {
                         gap: '10px'
                       }}
                     >
-                      {/* Topic row */}
                       <div className="flex-between">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <input 
@@ -443,7 +499,6 @@ export default function CalendarPage() {
                             checked={topic.completed}
                             onChange={() => handleToggleTopic(topic.planId, topic.topicIndex, topic.completed)}
                             style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                            title="Mark topic as completed"
                           />
                           <div>
                             <span style={{ fontSize: '0.82rem', fontWeight: 700, textDecoration: topic.completed ? 'line-through' : 'none', color: topic.completed ? 'var(--text-muted)' : 'var(--text-primary)' }}>
@@ -460,18 +515,17 @@ export default function CalendarPage() {
                         </span>
                       </div>
 
-                      {/* Content Row: Notes & Quizzes */}
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '10px', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '8px' }}>
                         
                         {/* 📚 Notes for this Topic */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                           <div style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
-                            📚 Study Guides & Notes ({subjectNotes.length})
+                            📚 Topic-Specific Notes & Guides ({subjectNotes.length})
                           </div>
 
                           {subjectNotes.length === 0 ? (
                             <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: 0, fontStyle: 'italic' }}>
-                              No study notes generated yet. <Link to="/notes" style={{ color: 'var(--accent-light)', textDecoration: 'underline' }}>Create Note</Link>
+                              AI is generating notes in the background... <Link to="/notes" style={{ color: 'var(--accent-light)', textDecoration: 'underline' }}>Create Custom Notes</Link>
                             </p>
                           ) : (
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -484,9 +538,9 @@ export default function CalendarPage() {
                                       {note.type === 'auto_generated' ? '✨ AI Study Guide' : '📝 Manual Summary'}
                                     </div>
                                     <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', margin: '4px 0 0', whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>
-                                      {isExpanded ? (note.summary || note.generated_notes) : `${(note.summary || note.generated_notes || '').slice(0, 160)}...`}
+                                      {isExpanded ? (note.summary || note.generated_notes) : `${(note.summary || note.generated_notes || '').slice(0, 200)}...`}
                                     </p>
-                                    {(note.summary || note.generated_notes || '').length > 160 && (
+                                    {(note.summary || note.generated_notes || '').length > 200 && (
                                       <button 
                                         className="btn btn-ghost btn-xs" 
                                         onClick={() => toggleExpandNote(noteId)}
@@ -498,16 +552,11 @@ export default function CalendarPage() {
                                   </div>
                                 );
                               })}
-                              {subjectNotes.length > 2 && (
-                                <Link to="/notes" style={{ fontSize: '0.7rem', color: 'var(--accent-light)', fontWeight: 600 }}>
-                                  View all {subjectNotes.length} notes in Study Library →
-                                </Link>
-                              )}
                             </div>
                           )}
                         </div>
 
-                        {/* 🧩 Quizzes for this Topic */}
+                        {/* Quizzes */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: '8px' }}>
                           <div className="flex-between">
                             <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
@@ -542,7 +591,6 @@ export default function CalendarPage() {
                         </div>
 
                       </div>
-
                     </div>
                   );
                 })}
@@ -571,7 +619,7 @@ export default function CalendarPage() {
                 onClick={() => setModalTab('event')}
                 style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }}
               >
-                🔔 Add Event/Test
+                🔔 Add Alert
               </button>
               <button 
                 type="button"
@@ -638,7 +686,7 @@ export default function CalendarPage() {
                   disabled={submitting || subjects.length === 0}
                   style={{ fontSize: '0.8rem', padding: '10px' }}
                 >
-                  {submitting ? 'Rescheduling...' : 'Set Deadline'}
+                  {submitting ? 'Rescheduling...' : 'Set Exam Date'}
                 </button>
               </form>
             )}

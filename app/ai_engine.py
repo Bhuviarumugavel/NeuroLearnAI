@@ -392,3 +392,74 @@ def generate_flashcards(text: str, num_cards: int = 10) -> list:
         return [{"front": "Could not generate flashcards", "back": "Please try again"}]
     except Exception:
         return [{"front": "Offline Mock Flashcard", "back": "Connect to AI for real flashcards"}]
+
+
+# ─────────────────────────────────────────────────────────
+# 7. Topic-Based Study Notes & Web Search
+# ─────────────────────────────────────────────────────────
+
+import httpx
+
+async def search_duckduckgo_snippets(query: str, email: str = "anonymous@example.com") -> str:
+    """Perform a web search query on DuckDuckGo HTML and extract snippets, setting the default contact email."""
+    headers = {
+        "User-Agent": f"NeurolearnAI/1.0 (contact: {email})"
+    }
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as async_client:
+            resp = await async_client.get(f"https://html.duckduckgo.com/html/?q={query}", headers=headers)
+            if resp.status_code == 200:
+                html = resp.text
+                snippets = []
+                parts = html.split('<a class="result__snippet"')
+                for part in parts[1:5]:  # top 4 results
+                    snippet_content = part.split('</a>')[0]
+                    # Simple HTML tag stripping
+                    clean_snippet = ""
+                    in_tag = False
+                    for char in snippet_content:
+                        if char == '<':
+                            in_tag = True
+                        elif char == '>':
+                            in_tag = False
+                        elif not in_tag:
+                            clean_snippet += char
+                    clean_snippet = clean_snippet.replace("&amp;", "&").replace("&quot;", '"').replace("&#x27;", "'")
+                    snippets.append(clean_snippet.strip())
+                return "\n".join(snippets)
+    except Exception as e:
+        print(f"DuckDuckGo web search failed: {e}")
+    return ""
+
+
+def generate_notes_for_topic(topic_name: str, subject_name: str, web_context: str = "") -> str:
+    """Generate detailed, comprehensive study notes for a specific topic, utilizing web context if available."""
+    try:
+        system_content = (
+            "You are a world-class academic tutor. Your goal is to write comprehensive, detailed, "
+            "and academically rigorous study notes on the requested topic. Explain core principles, "
+            "include definitions, and summarize primary formulas or logical arguments. "
+            "Use clear headings, markdown styling, bullet points, and highlight important vocabulary."
+        )
+        user_content = f"Generate complete study notes for the topic '{topic_name}' in the subject '{subject_name}'."
+        if web_context:
+            user_content += f"\n\nUse the following gathered web information as additional reference:\n{web_context}"
+            
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_content}
+            ],
+            max_tokens=2000
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return (
+            f"### Study Notes: {topic_name}\n\n"
+            f"**Subject:** {subject_name}\n\n"
+            f"**Core Summary:**\n"
+            f"Detailed overview of {topic_name} covering foundational principles, standard methodologies, "
+            f"and practical applications. Read relevant textbook chapters for detailed equations and examples.\n\n"
+            f"*(Generated in offline mode)*"
+        )
