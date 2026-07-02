@@ -41,6 +41,8 @@ export default function SubjectsPage() {
     daily_study_minutes: 45
   });
 
+  const activeSub = subjects.find(s => (s._id || s.id) === selectedSubId);
+
   // Sync editForm state when activeSub changes
   useEffect(() => {
     if (activeSub) {
@@ -61,8 +63,6 @@ export default function SubjectsPage() {
       setSelectedSubId(subjects[0]._id || subjects[0].id);
     }
   }, [subjects, selectedSubId]);
-
-  const activeSub = subjects.find(s => (s._id || s.id) === selectedSubId);
 
   const handleNewSubFileChange = (e) => {
     if (e.target.files && e.target.files[0]) {

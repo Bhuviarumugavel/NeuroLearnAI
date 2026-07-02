@@ -14,7 +14,7 @@ import { useData } from '../context/DataContext';
 import { useStudyTimer } from '../context/StudyTimerContext';
 
 export default function NotesPage() {
-  const { subjects, notes, refreshNotes, refreshSummary } = useData();
+  const { subjects, notes, plans, refreshNotes, refreshSummary } = useData();
   const { activeSubjectId, secondsElapsed, isActive, startSession, stopSession } = useStudyTimer();
 
   // Primary page tab: 'study' (Option 1) | 'manual' (Option 2)
@@ -161,37 +161,33 @@ export default function NotesPage() {
     return `${hrs}h ${remainingMins}m`;
   };
 
-  // Calculate days remaining to exam and total recommended study time
-  const getSubjectTimeStats = (sub) => {
-    const dailyTarget = sub.daily_study_minutes || 45;
-    let daysRemaining = null;
-    let recommendedTimeLeftStr = 'N/A';
+  const getTopicDateStr = (planCreatedAt, topicDay) => {
+    if (!planCreatedAt) return '';
+    const start = new Date(planCreatedAt);
+    start.setDate(start.getDate() + (topicDay - 1));
+    return `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+  };
+
+  const getTodayTopicForSubject = (subjectName) => {
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const plan = plans.find(p => p.subject_name.toLowerCase() === subjectName.toLowerCase());
     
-    if (sub.deadline) {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const examDate = new Date(sub.deadline);
-      examDate.setHours(0, 0, 0, 0);
+    if (plan && plan.topics) {
+      // 1. Try to find topic scheduled for today
+      let topic = plan.topics.find(t => getTopicDateStr(plan.created_at, t.day) === todayStr);
+      if (topic) return topic;
       
-      const timeDiff = examDate - today;
-      daysRemaining = Math.ceil(timeDiff / (1000 * 60 * 60 * 24));
+      // 2. Fallback to first incomplete topic
+      topic = plan.topics.find(t => !t.completed);
+      if (topic) return topic;
       
-      if (daysRemaining > 0) {
-        const totalMins = daysRemaining * dailyTarget;
-        const totalHrs = (totalMins / 60).toFixed(1);
-        recommendedTimeLeftStr = `${totalHrs} hrs total`;
-      } else if (daysRemaining === 0) {
-        recommendedTimeLeftStr = 'Exam is today!';
-      } else {
-        recommendedTimeLeftStr = 'Exam passed';
+      // 3. Fallback to last topic if all complete
+      if (plan.topics.length > 0) {
+        return plan.topics[plan.topics.length - 1];
       }
     }
-    
-    return {
-      dailyTarget,
-      daysRemaining,
-      recommendedTimeLeftStr
-    };
+    return null;
   };
 
   return (
@@ -253,11 +249,22 @@ export default function NotesPage() {
                 const currentFocusSecs = (sub.study_time_seconds || 0) + (isCurrentStudying ? secondsElapsed : 0);
                 const currentFocusFormatted = formatFocusTime(currentFocusSecs);
 
-                // Calculate deadlines and recommended time estimates
-                const { dailyTarget, daysRemaining, recommendedTimeLeftStr } = getSubjectTimeStats(sub);
+                // Fetch active scheduled topic
+                const activeTopic = getTodayTopicForSubject(sub.name);
 
                 // Fetch notes matching this subject
                 let matchingNotes = notes.filter(n => n.subject.toLowerCase() === sub.name.toLowerCase());
+                if (activeTopic) {
+                  const topicKeywords = activeTopic.name.toLowerCase();
+                  const topicSpecificNotes = matchingNotes.filter(n => 
+                    (n.summary || '').toLowerCase().includes(topicKeywords) || 
+                    (n.original_text || '').toLowerCase().includes(topicKeywords)
+                  );
+                  if (topicSpecificNotes.length > 0) {
+                    matchingNotes = topicSpecificNotes;
+                  }
+                }
+
                 if (searchQuery.trim()) {
                   const query = searchQuery.toLowerCase();
                   matchingNotes = matchingNotes.filter(n => 
@@ -276,13 +283,13 @@ export default function NotesPage() {
                       padding: '16px',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: '14px',
+                      gap: '12px',
                       boxShadow: isCurrentStudying ? `0 0 12px ${subColor}25` : 'none',
                       transition: 'all 0.3s ease'
                     }}
                   >
                     {/* Header Row */}
-                    <div className="flex-between" style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+                    <div className="flex-between" style={{ paddingBottom: isCurrentStudying ? '8px' : '0px', borderBottom: isCurrentStudying ? '1px solid var(--border-subtle)' : 'none' }}>
                       <div>
                         <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: subColor }}></span>
@@ -315,121 +322,107 @@ export default function NotesPage() {
                       </div>
                     </div>
 
-                    {/* Time of Study Calculations Grid */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: '10px' }}>
-                      
-                      {/* Calculated Focus Time */}
-                      <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
-                        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>⏱️ Time of Study</span>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--accent-light)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          {currentFocusFormatted}
-                          {isCurrentStudying && <span className="timer-pulse-dot" style={{ display: 'inline-block' }}></span>}
+                    {/* Today's Target Topic & Notes List (Only shown when active studying session is running!) */}
+                    {isCurrentStudying && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
+                        
+                        {/* Dynamic study duration timer */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-secondary)' }}>⏱️ Study focus session duration:</span>
+                          <span style={{ fontSize: '0.88rem', fontWeight: 800, color: 'var(--accent-light)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            {currentFocusFormatted}
+                            <span className="timer-pulse-dot"></span>
+                          </span>
                         </div>
-                      </div>
 
-                      {/* Daily Target Duration */}
-                      <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
-                        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>🎯 Daily Target</span>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
-                          {dailyTarget} mins / day
-                        </div>
-                      </div>
-
-                      {/* Target Deadline */}
-                      <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
-                        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>🗓️ Target Deadline</span>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
-                          {sub.deadline ? new Date(sub.deadline).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'No Exam Date'}
-                          {daysRemaining !== null && (
-                            <span style={{ display: 'block', fontSize: '0.65rem', color: daysRemaining <= 3 ? '#ef4444' : 'var(--text-muted)', marginTop: '1px' }}>
-                              {daysRemaining > 0 ? `(${daysRemaining} days left)` : daysRemaining === 0 ? '(Exam is TODAY)' : '(Passed)'}
-                            </span>
+                        {/* Today's Target Topic display */}
+                        <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
+                          <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Today's Target Topic</span>
+                          {activeTopic ? (
+                            <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
+                              Day {activeTopic.day}: {activeTopic.name} <span style={{ fontSize: '0.7rem', fontWeight: 500, color: 'var(--text-muted)' }}>({activeTopic.duration} mins target)</span>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px', fontStyle: 'italic' }}>
+                              No topic scheduled for today in the study plan.
+                            </div>
                           )}
                         </div>
-                      </div>
 
-                      {/* Recommended total hours remaining */}
-                      <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
-                        <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>⏳ Recommended Study Left</span>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
-                          {recommendedTimeLeftStr}
-                        </div>
-                      </div>
+                        {/* Notes list for today's topic */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Today's Study Notes ({matchingNotes.length})
+                          </span>
 
-                    </div>
-
-                    {/* Study Notes List */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-                      <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Study Notes & Summaries ({matchingNotes.length})
-                      </div>
-                      
-                      {matchingNotes.length === 0 ? (
-                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 0 0', fontStyle: 'italic' }}>
-                          No study notes saved for this subject yet. Go to the "Manual Unit Summarizer" tab to generate one.
-                        </p>
-                      ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                          {matchingNotes.map((note) => {
-                            const noteId = note._id || note.id;
-                            const isExpanded = !!expandedNotes[noteId];
-                            const isTimeMgmtSummary = note.summary?.includes('Time Management') || note.summary?.includes('Estimated Study Time') || note.summary?.includes('|');
-                            
-                            return (
-                              <div 
-                                key={noteId} 
-                                style={{ 
-                                  background: 'rgba(255,255,255,0.01)', 
-                                  border: '1px solid var(--border-subtle)', 
-                                  padding: '10px', 
-                                  borderRadius: 'var(--radius-md)', 
-                                  position: 'relative' 
-                                }}
-                              >
-                                <button 
-                                  onClick={(e) => handleDeleteNote(noteId, e)}
-                                  style={{ position: 'absolute', top: 8, right: 10, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.72rem' }}
-                                  title="Delete note"
-                                >
-                                  ✕
-                                </button>
+                          {matchingNotes.length === 0 ? (
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 0 0', fontStyle: 'italic' }}>
+                              No study notes generated for today's topic. Go to the "Manual Unit Summarizer" tab to generate one.
+                            </p>
+                          ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {matchingNotes.map((note) => {
+                                const noteId = note._id || note.id;
+                                const isExpanded = !!expandedNotes[noteId];
+                                const isTimeMgmtSummary = note.summary?.includes('Time Management') || note.summary?.includes('Estimated Study Time') || note.summary?.includes('|');
                                 
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
-                                  <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                                    {note.type === 'auto_generated' ? '✨ AI Core Guide' : '📝 Manual Summarized'}
-                                  </span>
-                                  <span className={`badge ${isTimeMgmtSummary ? 'badge-blue' : 'badge-purple'}`} style={{ fontSize: '0.58rem', padding: '1px 5px' }}>
-                                    {isTimeMgmtSummary ? 'Time Management Summary' : 'General Summary'}
-                                  </span>
-                                </div>
-
-                                <div className="markdown-content" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.4, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
-                                  {note.summary || note.generated_notes}
-                                </div>
-                                
-                                {note.original_text && (
-                                  <div style={{ marginTop: '8px', borderTop: '1px dashed var(--border-subtle)', paddingTop: '6px' }}>
+                                return (
+                                  <div 
+                                    key={noteId} 
+                                    style={{ 
+                                      background: 'rgba(255,255,255,0.01)', 
+                                      border: '1px solid var(--border-subtle)', 
+                                      padding: '10px', 
+                                      borderRadius: 'var(--radius-md)', 
+                                      position: 'relative' 
+                                    }}
+                                  >
                                     <button 
-                                      className="btn btn-ghost btn-xs" 
-                                      onClick={() => toggleExpandNote(noteId)}
-                                      style={{ fontSize: '0.62rem', padding: 0, height: 'auto', color: 'var(--text-muted)' }}
+                                      onClick={(e) => handleDeleteNote(noteId, e)}
+                                      style={{ position: 'absolute', top: 8, right: 10, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.72rem' }}
+                                      title="Delete note"
                                     >
-                                      {isExpanded ? '▼ Hide Original Unit Text' : '▶ Show Original Unit Text'}
+                                      ✕
                                     </button>
-                                    {isExpanded && (
-                                      <div style={{ marginTop: '6px', padding: '8px', background: 'rgba(0,0,0,0.15)', borderRadius: '4px', fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', maxHeight: '120px', overflowY: 'auto' }}>
-                                        {note.original_text}
+                                    
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                                        {note.type === 'auto_generated' ? '✨ AI Study Guide' : '📝 Manual Summary'}
+                                      </span>
+                                      <span className={`badge ${isTimeMgmtSummary ? 'badge-blue' : 'badge-purple'}`} style={{ fontSize: '0.58rem', padding: '1px 5px' }}>
+                                        {isTimeMgmtSummary ? 'Time Management' : 'General Summary'}
+                                      </span>
+                                    </div>
+
+                                    <div className="markdown-content" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.4, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+                                      {note.summary || note.generated_notes}
+                                    </div>
+                                    
+                                    {note.original_text && (
+                                      <div style={{ marginTop: '8px', borderTop: '1px dashed var(--border-subtle)', paddingTop: '6px' }}>
+                                        <button 
+                                          className="btn btn-ghost btn-xs" 
+                                          onClick={() => toggleExpandNote(noteId)}
+                                          style={{ fontSize: '0.62rem', padding: 0, height: 'auto', color: 'var(--text-muted)' }}
+                                        >
+                                          {isExpanded ? '▼ Hide Original Text' : '▶ Show Original Text'}
+                                        </button>
+                                        {isExpanded && (
+                                          <div style={{ marginTop: '6px', padding: '8px', background: 'rgba(0,0,0,0.15)', borderRadius: '4px', fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', maxHeight: '120px', overflowY: 'auto' }}>
+                                            {note.original_text}
+                                          </div>
+                                        )}
                                       </div>
                                     )}
                                   </div>
-                                )}
-                              </div>
-                            );
-                          })}
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
 
+                      </div>
+                    )}
                   </div>
                 );
               })}
