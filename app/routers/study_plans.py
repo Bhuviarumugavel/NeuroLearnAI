@@ -35,6 +35,32 @@ async def generate_all_topic_notes_task(user_id: str, subject_name: str, topics:
         if existing:
             continue
 
+        # Gather manual notes context
+        uploaded_context = ""
+        try:
+            from app.database import notes_collection
+            cursor = notes_collection.find({
+                "user_id": user_id,
+                "subject": subject_name,
+                "type": "manual"
+            })
+            matching_manual_texts = []
+            async for doc in cursor:
+                doc_unit = doc.get("unit", "")
+                doc_topic = doc.get("topic", "")
+                doc_text = doc.get("original_text", "") or doc.get("summary", "")
+                
+                # Check if this note pertains to the current topic
+                if (doc_topic and doc_topic.lower() in topic_name.lower()) or \
+                   (doc_unit and doc_unit.lower() in topic_name.lower()) or \
+                   (not doc_topic and not doc_unit): # General note
+                    matching_manual_texts.append(f"--- Note Content ({doc.get('description', '')} / Topic: {doc_topic}) ---\n{doc_text[:1500]}")
+            
+            if matching_manual_texts:
+                uploaded_context = "\n\n".join(matching_manual_texts)
+        except Exception as ex:
+            print(f"[BG-TASK] Failed querying manual notes: {ex}")
+
         # Gather web content
         query = f"{subject_name} {topic_name}"
         web_context = ""
@@ -45,7 +71,7 @@ async def generate_all_topic_notes_task(user_id: str, subject_name: str, topics:
 
         # Call AI
         try:
-            notes_text = generate_notes_for_topic(topic_name, subject_name, web_context)
+            notes_text = generate_notes_for_topic(topic_name, subject_name, web_context, uploaded_context)
             note_doc = create_note_document(
                 user_id=user_id,
                 subject_tag=subject_name,

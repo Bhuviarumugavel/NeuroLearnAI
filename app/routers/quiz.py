@@ -24,10 +24,36 @@ async def generate_quiz(
     request: QuizGenerateRequest,
     user: dict = Depends(get_current_user_optional),
 ):
-    """Generate an AI-powered quiz from source text."""
+    """Generate an AI-powered quiz from source text enriched by uploaded notes and user profile ability."""
     user_id = user["_id"] if user else "anonymous"
 
-    quiz_data = generate_structured_quiz(request.text, request.num_questions)
+    # 1. Enrich source text using manually uploaded notes for this subject
+    enriched_text = request.text
+    try:
+        from app.database import notes_collection
+        cursor = notes_collection.find({
+            "user_id": user_id,
+            "subject": request.subject,
+            "type": "manual"
+        })
+        manual_texts = []
+        async for doc in cursor:
+            t = doc.get("original_text", "") or doc.get("summary", "")
+            if t:
+                manual_texts.append(t[:1200])
+        
+        if manual_texts:
+            enriched_text = f"{enriched_text}\n\n=== Additional Uploaded Reference Materials ===\n" + "\n".join(manual_texts)
+    except Exception as ex:
+        print(f"[QUIZ-GEN] Failed enriching quiz source text: {ex}")
+
+    # 2. Get user academic ability level from profile settings
+    user_ability = "Medium"
+    if user:
+        study_prefs = user.get("study_preferences", {})
+        user_ability = study_prefs.get("education_status") or "Medium"
+
+    quiz_data = generate_structured_quiz(enriched_text, request.num_questions, user_ability)
 
     # Persist quiz to MongoDB
     quiz_doc = create_quiz_document(

@@ -43,6 +43,10 @@ async def create_note(
         summary=summary,
         note_type="manual",
         description=getattr(request, "description", ""),
+        unit=getattr(request, "unit", ""),
+        syllabus=getattr(request, "syllabus", ""),
+        topic=getattr(request, "topic", ""),
+        book=getattr(request, "book", ""),
     )
     now = datetime.now(timezone.utc).isoformat()
     note_doc["created_at"] = now
@@ -205,6 +209,10 @@ async def upload_file_notes(
     subject_tag: str = Form(...),
     description: str = Form(""),
     summary_type: str = Form("general"),
+    unit: str = Form(""),
+    syllabus: str = Form(""),
+    topic: str = Form(""),
+    book: str = Form(""),
     user: dict = Depends(get_current_user_optional),
 ):
     """Upload a TXT, PDF, DOCX, or Image file to extract text & generate AI summary."""
@@ -298,6 +306,10 @@ async def upload_file_notes(
         summary=summary,
         note_type="manual",
         description=description,
+        unit=unit,
+        syllabus=syllabus,
+        topic=topic,
+        book=book,
     )
     now = datetime.now(timezone.utc).isoformat()
     note_doc["created_at"] = now

@@ -1,18 +1,34 @@
-/**
- * RemindersPage.jsx — Notification Settings Page.
- * Schedule custom study alerts, test alarms, and toggle automated notifications.
- */
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import api from '../utils/api';
 import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
 
 export default function RemindersPage() {
   const { reminders, refreshReminders, refreshSummary } = useData();
+  const { user } = useAuth();
 
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ message: '', remind_at: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+
+  // Default reminder scheduler time based on availability window (e.g. 5-9 -> 5:00)
+  useEffect(() => {
+    if (showForm && user?.study_preferences?.availability) {
+      const avail = user.study_preferences.availability;
+      const match = avail.match(/\d+/);
+      if (match) {
+        const hour = parseInt(match[0], 10);
+        const now = new Date();
+        const yyyy = now.getFullYear();
+        const mm = String(now.getMonth() + 1).padStart(2, '0');
+        const dd = String(now.getDate()).padStart(2, '0');
+        const hh = String(hour).padStart(2, '0');
+        const defaultDateTime = `${yyyy}-${mm}-${dd}T${hh}:00`;
+        setForm(f => ({ ...f, remind_at: defaultDateTime }));
+      }
+    }
+  }, [showForm, user]);
 
   // Automated notification settings toggles
   const [automatedAlerts, setAutomatedAlerts] = useState({

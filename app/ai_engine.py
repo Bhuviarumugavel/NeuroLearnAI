@@ -165,21 +165,20 @@ def summarize_image(base64_image: str, mime_type: str, summary_type: str = "gene
 # 2. Quiz Generation
 # ─────────────────────────────────────────────────────────
 
-def generate_structured_quiz(raw_text: str, num_questions: int = 5) -> list:
-    """Text -> N-question MCQ (JSON array)"""
+def generate_structured_quiz(raw_text: str, num_questions: int = 5, user_ability: str = "Medium") -> list:
+    """Text -> N-question MCQ (JSON array) adjusted to user academic ability."""
     try:
+        system_content = (
+            f"You are an elite academic assessment creator. Generate {num_questions} multiple choice questions "
+            f"from the provided text. Adjust the question complexity and vocabulary to align with the user's profile ability: '{user_ability}'.\n\n"
+            "Return a valid JSON array of objects (no markdown blocks), each matching this schema exactly:\n"
+            '{"question": "The question text?", "options": ["Option A", "Option B", "Option C", "Option D"], "answer": "The correct option text exactly"}'
+        )
         response = client.chat.completions.create(
             model=MODEL,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        f"You are a quiz generator. Generate {num_questions} multiple choice questions "
-                        "from the given text. Return a JSON array where each item has: "
-                        "question, options (array of 4), answer (the correct option text)."
-                    ),
-                },
-                {"role": "user", "content": raw_text},
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": f"Source study materials:\n{raw_text}"},
             ],
             max_tokens=1500
         )
@@ -432,8 +431,8 @@ async def search_duckduckgo_snippets(query: str, email: str = "anonymous@example
     return ""
 
 
-def generate_notes_for_topic(topic_name: str, subject_name: str, web_context: str = "") -> str:
-    """Generate detailed, comprehensive study notes for a specific topic, utilizing web context if available."""
+def generate_notes_for_topic(topic_name: str, subject_name: str, web_context: str = "", uploaded_context: str = "") -> str:
+    """Generate detailed, comprehensive study notes for a specific topic, utilizing web context and user uploads if available."""
     try:
         system_content = (
             "You are a world-class academic tutor. Your goal is to write comprehensive, detailed, "
@@ -442,6 +441,8 @@ def generate_notes_for_topic(topic_name: str, subject_name: str, web_context: st
             "Use clear headings, markdown styling, bullet points, and highlight important vocabulary."
         )
         user_content = f"Generate complete study notes for the topic '{topic_name}' in the subject '{subject_name}'."
+        if uploaded_context:
+            user_content += f"\n\nUse the student's own uploaded notes/syllabus context as the PRIMARY source for accuracy:\n{uploaded_context}"
         if web_context:
             user_content += f"\n\nUse the following gathered web information as additional reference:\n{web_context}"
             

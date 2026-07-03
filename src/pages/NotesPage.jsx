@@ -25,9 +25,10 @@ export default function NotesPage() {
   const [summaryType, setSummaryType] = useState('time_management'); // 'time_management' (default) | 'general'
   const [form, setForm] = useState({ text: '', tags: '' });
   const [formFiles, setFormFiles] = useState([]); // Multiple files
-  const [manualScope, setManualScope] = useState('unit'); // 'unit' | 'topic'
-  const [manualScopeValue, setManualScopeValue] = useState('Unit 1');
-  const [customScopeValue, setCustomScopeValue] = useState('');
+  const [manualUnit, setManualUnit] = useState('');
+  const [manualSyllabus, setManualSyllabus] = useState('');
+  const [manualTopic, setManualTopic] = useState('');
+  const [manualBook, setManualBook] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successData, setSuccessData] = useState(null);
@@ -110,8 +111,7 @@ export default function NotesPage() {
     setSuccessData(null);
 
     try {
-      const scopeVal = manualScopeValue === 'Custom' ? customScopeValue : manualScopeValue;
-      const scopeDesc = `${manualScope === 'unit' ? 'Unit' : 'Topic'}: ${scopeVal}`;
+      const scopeDesc = `Unit: ${manualUnit || 'N/A'} | Topic: ${manualTopic || 'N/A'} | Book: ${manualBook || 'N/A'}`;
 
       let lastSummary = "";
       if (hasFiles) {
@@ -122,6 +122,10 @@ export default function NotesPage() {
           formData.append('subject_tag', subjectTag);
           formData.append('summary_type', summaryType);
           formData.append('description', scopeDesc);
+          formData.append('unit', manualUnit);
+          formData.append('syllabus', manualSyllabus);
+          formData.append('topic', manualTopic);
+          formData.append('book', manualBook);
           
           const uploadRes = await api.post('/api/notes/upload-file', formData, {
             headers: { 'Content-Type': 'multipart/form-data' }
@@ -133,7 +137,11 @@ export default function NotesPage() {
           text: form.text,
           subject_tag: subjectTag,
           summary_type: summaryType,
-          description: scopeDesc
+          description: scopeDesc,
+          unit: manualUnit,
+          syllabus: manualSyllabus,
+          topic: manualTopic,
+          book: manualBook
         });
         lastSummary = res.data.summary;
       }
@@ -146,7 +154,10 @@ export default function NotesPage() {
 
       setForm({ text: '', tags: '' });
       setFormFiles([]);
-      setCustomScopeValue('');
+      setManualUnit('');
+      setManualSyllabus('');
+      setManualTopic('');
+      setManualBook('');
       await Promise.all([refreshNotes(), refreshSummary()]);
     } catch (err) {
       setError(err.response?.data?.detail || 'AI Summarization failed.');
@@ -413,6 +424,15 @@ export default function NotesPage() {
                                       </span>
                                     </div>
 
+                                    {(note.unit || note.topic || note.book || note.syllabus) && (
+                                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px', marginTop: '2px' }}>
+                                        {note.unit && <span className="badge badge-blue" style={{ fontSize: '0.62rem', padding: '2px 6px' }}>📚 Unit: {note.unit}</span>}
+                                        {note.topic && <span className="badge badge-green" style={{ fontSize: '0.62rem', padding: '2px 6px' }}>🔍 Topic: {note.topic}</span>}
+                                        {note.book && <span className="badge badge-orange" style={{ fontSize: '0.62rem', padding: '2px 6px' }}>📖 Book: {note.book}</span>}
+                                        {note.syllabus && <span className="badge badge-purple" style={{ fontSize: '0.62rem', padding: '2px 6px' }}>📋 Outline: {note.syllabus}</span>}
+                                      </div>
+                                    )}
+
                                     <div className="markdown-content" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.4, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
                                       {note.summary || note.generated_notes}
                                     </div>
@@ -486,69 +506,49 @@ export default function NotesPage() {
                     ))}
                   </select>
                 </div>
-                            {/* Notes Scope / Type */}
                 <div className="form-group">
-                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Notes Scope / Type</label>
-                  <select 
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Unit / Chapter</label>
+                  <input 
                     className="form-input" 
-                    value={manualScope} 
-                    onChange={(e) => {
-                      setManualScope(e.target.value);
-                      setManualScopeValue(e.target.value === 'unit' ? 'Unit 1' : (activeTopics[0]?.name || 'Custom'));
-                    }}
-                    style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                  >
-                    <option value="unit">Unit-wise</option>
-                    <option value="topic">Topic-wise</option>
-                  </select>
+                    placeholder="e.g. Unit 1: Synaptic Anatomy" 
+                    value={manualUnit}
+                    onChange={(e) => setManualUnit(e.target.value)}
+                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                  />
                 </div>
 
-                {/* Select Unit or Topic */}
                 <div className="form-group">
-                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Select Unit or Topic</label>
-                  {manualScope === 'unit' ? (
-                    <select 
-                      className="form-input" 
-                      value={manualScopeValue} 
-                      onChange={(e) => setManualScopeValue(e.target.value)}
-                      style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                    >
-                      <option value="Unit 1">Unit 1</option>
-                      <option value="Unit 2">Unit 2</option>
-                      <option value="Unit 3">Unit 3</option>
-                      <option value="Unit 4">Unit 4</option>
-                      <option value="Unit 5">Unit 5</option>
-                      <option value="Unit 6">Unit 6</option>
-                      <option value="Custom">Custom Unit Name</option>
-                    </select>
-                  ) : (
-                    <select 
-                      className="form-input" 
-                      value={manualScopeValue} 
-                      onChange={(e) => setManualScopeValue(e.target.value)}
-                      style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                    >
-                      {activeTopics.map((t, idx) => (
-                        <option key={idx} value={t.name}>{t.name}</option>
-                      ))}
-                      <option value="Custom">Custom Topic Name</option>
-                    </select>
-                  )}
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Syllabus / Notes Outline</label>
+                  <input 
+                    className="form-input" 
+                    placeholder="e.g. Synaptic cleft, vesicle release, neurotransmitters" 
+                    value={manualSyllabus}
+                    onChange={(e) => setManualSyllabus(e.target.value)}
+                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                  />
                 </div>
 
-                {manualScopeValue === 'Custom' && (
-                  <div className="form-group">
-                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Custom Scope Name *</label>
-                    <input 
-                      className="form-input"
-                      placeholder={manualScope === 'unit' ? "e.g. Unit 7: Advanced Neural Networks" : "e.g. Action Potential Propagation"}
-                      value={customScopeValue}
-                      onChange={(e) => setCustomScopeValue(e.target.value)}
-                      required
-                      style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                    />
-                  </div>
-                )}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Topic Name</label>
+                  <input 
+                    className="form-input" 
+                    placeholder="e.g. Synapses and Neurotransmitters" 
+                    value={manualTopic}
+                    onChange={(e) => setManualTopic(e.target.value)}
+                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Book Reference / Chapter</label>
+                  <input 
+                    className="form-input" 
+                    placeholder="e.g. Neuroscience Principles, Ch 5" 
+                    value={manualBook}
+                    onChange={(e) => setManualBook(e.target.value)}
+                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                  />
+                </div>
 
                 {/* Summary Goal Selection: Recommended/Default is Time Management */}
                 <div className="form-group">

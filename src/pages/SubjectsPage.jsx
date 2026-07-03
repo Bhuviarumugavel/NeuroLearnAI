@@ -25,9 +25,10 @@ export default function SubjectsPage() {
   const [manualText, setManualText] = useState('');
   const [manualTitle, setManualTitle] = useState('');
   const [manualFiles, setManualFiles] = useState([]); // Array for multiple files
-  const [manualScope, setManualScope] = useState('unit'); // 'unit' | 'topic'
-  const [manualScopeValue, setManualScopeValue] = useState('Unit 1');
-  const [customScopeValue, setCustomScopeValue] = useState('');
+  const [manualUnit, setManualUnit] = useState('');
+  const [manualSyllabus, setManualSyllabus] = useState('');
+  const [manualTopic, setManualTopic] = useState('');
+  const [manualBook, setManualBook] = useState('');
   
   const [saving, setSaving] = useState(false);
   const [uploadingManual, setUploadingManual] = useState(false);
@@ -202,8 +203,7 @@ export default function SubjectsPage() {
     setError('');
     setSuccessMsg('');
     try {
-      const scopeVal = manualScopeValue === 'Custom' ? customScopeValue : manualScopeValue;
-      const scopeDesc = `${manualScope === 'unit' ? 'Unit' : 'Topic'}: ${scopeVal}`;
+      const scopeDesc = `Unit: ${manualUnit || 'N/A'} | Topic: ${manualTopic || 'N/A'} | Book: ${manualBook || 'N/A'}`;
 
       if (hasFiles) {
         // Upload each file sequentially
@@ -212,6 +212,10 @@ export default function SubjectsPage() {
           formData.append('file', file);
           formData.append('subject_tag', activeSub.name);
           formData.append('description', scopeDesc);
+          formData.append('unit', manualUnit);
+          formData.append('syllabus', manualSyllabus);
+          formData.append('topic', manualTopic);
+          formData.append('book', manualBook);
           
           await api.post('/api/notes/upload-file', formData, {
             headers: { 'Content-Type': 'multipart/form-data' }
@@ -221,15 +225,22 @@ export default function SubjectsPage() {
         await api.post('/api/notes', {
           text: manualText,
           subject_tag: activeSub.name,
-          description: scopeDesc
+          description: scopeDesc,
+          unit: manualUnit,
+          syllabus: manualSyllabus,
+          topic: manualTopic,
+          book: manualBook
         });
       }
       
-      setSuccessMsg(`Successfully uploaded and summarized ${hasFiles ? manualFiles.length : 1} study guide item(s) (${manualScope}-wise)!`);
+      setSuccessMsg(`Successfully uploaded and summarized ${hasFiles ? manualFiles.length : 1} study guide item(s)!`);
       setManualText('');
       setManualTitle('');
       setManualFiles([]);
-      setCustomScopeValue('');
+      setManualUnit('');
+      setManualSyllabus('');
+      setManualTopic('');
+      setManualBook('');
       
       // Update global context states (library + dashboard metrics)
       await Promise.all([refreshNotes(), refreshSummary()]);
@@ -495,66 +506,48 @@ export default function SubjectsPage() {
                 
                 <form onSubmit={handleManualNotesUpload} className="flex-col" style={{ gap: '10px' }}>
                   <div className="form-group">
-                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Notes Scope / Type</label>
-                    <select 
+                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Unit / Chapter</label>
+                    <input 
                       className="form-input" 
-                      value={manualScope} 
-                      onChange={(e) => {
-                        setManualScope(e.target.value);
-                        setManualScopeValue(e.target.value === 'unit' ? 'Unit 1' : (activeTopics[0]?.name || 'Custom'));
-                      }}
-                      style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                    >
-                      <option value="unit">Unit-wise</option>
-                      <option value="topic">Topic-wise</option>
-                    </select>
+                      placeholder="e.g. Unit 1: Synaptic Anatomy" 
+                      value={manualUnit}
+                      onChange={(e) => setManualUnit(e.target.value)}
+                      style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    />
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Select Unit or Topic</label>
-                    {manualScope === 'unit' ? (
-                      <select 
-                        className="form-input" 
-                        value={manualScopeValue} 
-                        onChange={(e) => setManualScopeValue(e.target.value)}
-                        style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                      >
-                        <option value="Unit 1">Unit 1</option>
-                        <option value="Unit 2">Unit 2</option>
-                        <option value="Unit 3">Unit 3</option>
-                        <option value="Unit 4">Unit 4</option>
-                        <option value="Unit 5">Unit 5</option>
-                        <option value="Unit 6">Unit 6</option>
-                        <option value="Custom">Custom Unit Name</option>
-                      </select>
-                    ) : (
-                      <select 
-                        className="form-input" 
-                        value={manualScopeValue} 
-                        onChange={(e) => setManualScopeValue(e.target.value)}
-                        style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                      >
-                        {activeTopics.map((t, idx) => (
-                          <option key={idx} value={t.name}>{t.name}</option>
-                        ))}
-                        <option value="Custom">Custom Topic Name</option>
-                      </select>
-                    )}
+                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Syllabus / Notes Outline</label>
+                    <input 
+                      className="form-input" 
+                      placeholder="e.g. Synaptic cleft, vesicle release, neurotransmitters" 
+                      value={manualSyllabus}
+                      onChange={(e) => setManualSyllabus(e.target.value)}
+                      style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    />
                   </div>
 
-                  {manualScopeValue === 'Custom' && (
-                    <div className="form-group">
-                      <label className="form-label" style={{ fontSize: '0.72rem' }}>Custom Scope Name *</label>
-                      <input 
-                        className="form-input"
-                        placeholder={manualScope === 'unit' ? "e.g. Unit 7: Advanced Neural Networks" : "e.g. Action Potential Propagation"}
-                        value={customScopeValue}
-                        onChange={(e) => setCustomScopeValue(e.target.value)}
-                        required
-                        style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                      />
-                    </div>
-                  )}
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Topic Name</label>
+                    <input 
+                      className="form-input" 
+                      placeholder="e.g. Synapses and Neurotransmitters" 
+                      value={manualTopic}
+                      onChange={(e) => setManualTopic(e.target.value)}
+                      style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Book Reference / Chapter</label>
+                    <input 
+                      className="form-input" 
+                      placeholder="e.g. Neuroscience Principles, Ch 5" 
+                      value={manualBook}
+                      onChange={(e) => setManualBook(e.target.value)}
+                      style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    />
+                  </div>
 
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: '0.72rem' }}>Select Document Files (Multiple Allowed)</label>

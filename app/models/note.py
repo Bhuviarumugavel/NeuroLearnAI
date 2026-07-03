@@ -10,6 +10,10 @@ def create_note_document(
     subject_name: str = "",
     description: str = "",
     generated_notes: str = "",
+    unit: str = "",
+    syllabus: str = "",
+    topic: str = "",
+    book: str = "",
 ) -> dict:
     """Create a note document ready for MongoDB insertion."""
     return {
@@ -25,4 +29,8 @@ def create_note_document(
         "tags": [],
         "created_at": None,
         "updated_at": None,
+        "unit": unit,
+        "syllabus": syllabus,
+        "topic": topic,
+        "book": book,
     }

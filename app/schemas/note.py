@@ -10,6 +10,10 @@ class NoteCreate(BaseModel):
     subject_tag: str = Field(..., description="Subject tag for the note")
     summary_type: Optional[str] = "general"
     description: Optional[str] = ""
+    unit: Optional[str] = ""
+    syllabus: Optional[str] = ""
+    topic: Optional[str] = ""
+    book: Optional[str] = ""
 
 
 class NoteUpdate(BaseModel):
@@ -36,6 +40,10 @@ class NoteResponse(BaseModel):
     is_favorite: bool = False
     tags: List[str] = []
     created_at: Optional[str] = None
+    unit: Optional[str] = ""
+    syllabus: Optional[str] = ""
+    topic: Optional[str] = ""
+    book: Optional[str] = ""
 
 
 class NotesListResponse(BaseModel):
