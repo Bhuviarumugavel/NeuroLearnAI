@@ -13,7 +13,7 @@ import json
 client = OpenAI(
     base_url=OPENROUTER_BASE_URL,
     api_key=OPENAI_API_KEY,
-    timeout=5.0,
+    timeout=60.0,
 )
 
 MODEL = "google/gemini-2.5-flash"
