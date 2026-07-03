@@ -24,7 +24,10 @@ export default function NotesPage() {
   const [selectedSubject, setSelectedSubject] = useState('');
   const [summaryType, setSummaryType] = useState('time_management'); // 'time_management' (default) | 'general'
   const [form, setForm] = useState({ text: '', tags: '' });
-  const [formFile, setFormFile] = useState(null);
+  const [formFiles, setFormFiles] = useState([]); // Multiple files
+  const [manualScope, setManualScope] = useState('unit'); // 'unit' | 'topic'
+  const [manualScopeValue, setManualScopeValue] = useState('Unit 1');
+  const [customScopeValue, setCustomScopeValue] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successData, setSuccessData] = useState(null);
@@ -33,6 +36,10 @@ export default function NotesPage() {
   // Search/Filters
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedNotes, setExpandedNotes] = useState({});
+
+  const activeSub = subjects.find(s => (s._id || s.id) === selectedSubject);
+  const activePlan = plans?.find(p => p.subject_name === activeSub?.name);
+  const activeTopics = activePlan?.topics || [];
 
   // Auto-select first subject in manual dropdown on load
   useEffect(() => {
@@ -52,34 +59,34 @@ export default function NotesPage() {
   };
 
   const parseFile = (file) => {
-    if (!file) return;
+    if (!file) return null;
     const validExtensions = ['.txt', '.md', '.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp'];
     const fileExt = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
     const isValid = validExtensions.includes(fileExt) || file.type.startsWith('image/') || file.type === 'application/pdf';
     
     if (!isValid) {
       setError("Unsupported file format (.txt, .md, .pdf, .docx, or images).");
-      setFormFile(null);
-      return;
+      return null;
     }
     
     setError('');
-    setFormFile(file);
-    setForm(f => ({ ...f, text: `[Selected file: ${file.name} - Will be parsed and summarized on submit]` }));
+    return file;
   };
 
   const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      parseFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const parsed = Array.from(e.dataTransfer.files).map(parseFile).filter(Boolean);
+      setFormFiles(prev => [...prev, ...parsed]);
     }
   };
 
   const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      parseFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      const parsed = Array.from(e.target.files).map(parseFile).filter(Boolean);
+      setFormFiles(prev => [...prev, ...parsed]);
     }
   };
 
@@ -92,8 +99,9 @@ export default function NotesPage() {
     }
     const subjectTag = activeSub.name;
 
-    if (!formFile && !form.text.trim()) {
-      setError('Please paste study content or drop a file to summarize.');
+    const hasFiles = formFiles.length > 0;
+    if (!hasFiles && !form.text.trim()) {
+      setError('Please paste study content or select one or more files.');
       return;
     }
 
@@ -102,32 +110,43 @@ export default function NotesPage() {
     setSuccessData(null);
 
     try {
-      let res;
-      if (formFile) {
-        const formData = new FormData();
-        formData.append('file', formFile);
-        formData.append('subject_tag', subjectTag);
-        formData.append('summary_type', summaryType);
-        
-        res = await api.post('/api/notes/upload-file', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
+      const scopeVal = manualScopeValue === 'Custom' ? customScopeValue : manualScopeValue;
+      const scopeDesc = `${manualScope === 'unit' ? 'Unit' : 'Topic'}: ${scopeVal}`;
+
+      let lastSummary = "";
+      if (hasFiles) {
+        // Upload each file sequentially
+        for (const file of formFiles) {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('subject_tag', subjectTag);
+          formData.append('summary_type', summaryType);
+          formData.append('description', scopeDesc);
+          
+          const uploadRes = await api.post('/api/notes/upload-file', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          });
+          lastSummary = uploadRes.data.summary || lastSummary;
+        }
       } else {
-        res = await api.post('/api/notes', {
+        const res = await api.post('/api/notes', {
           text: form.text,
           subject_tag: subjectTag,
-          summary_type: summaryType
+          summary_type: summaryType,
+          description: scopeDesc
         });
+        lastSummary = res.data.summary;
       }
 
       setSuccessData({
-        summary: res.data.summary,
+        summary: lastSummary || "Summary generated successfully.",
         subject: subjectTag,
         tags: form.tags ? form.tags.split(',').map(t => t.trim()) : [subjectTag, summaryType === 'time_management' ? 'Time Management' : 'AI Summary']
       });
 
       setForm({ text: '', tags: '' });
-      setFormFile(null);
+      setFormFiles([]);
+      setCustomScopeValue('');
       await Promise.all([refreshNotes(), refreshSummary()]);
     } catch (err) {
       setError(err.response?.data?.detail || 'AI Summarization failed.');
@@ -467,6 +486,69 @@ export default function NotesPage() {
                     ))}
                   </select>
                 </div>
+                            {/* Notes Scope / Type */}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Notes Scope / Type</label>
+                  <select 
+                    className="form-input" 
+                    value={manualScope} 
+                    onChange={(e) => {
+                      setManualScope(e.target.value);
+                      setManualScopeValue(e.target.value === 'unit' ? 'Unit 1' : (activeTopics[0]?.name || 'Custom'));
+                    }}
+                    style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                  >
+                    <option value="unit">Unit-wise</option>
+                    <option value="topic">Topic-wise</option>
+                  </select>
+                </div>
+
+                {/* Select Unit or Topic */}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Select Unit or Topic</label>
+                  {manualScope === 'unit' ? (
+                    <select 
+                      className="form-input" 
+                      value={manualScopeValue} 
+                      onChange={(e) => setManualScopeValue(e.target.value)}
+                      style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    >
+                      <option value="Unit 1">Unit 1</option>
+                      <option value="Unit 2">Unit 2</option>
+                      <option value="Unit 3">Unit 3</option>
+                      <option value="Unit 4">Unit 4</option>
+                      <option value="Unit 5">Unit 5</option>
+                      <option value="Unit 6">Unit 6</option>
+                      <option value="Custom">Custom Unit Name</option>
+                    </select>
+                  ) : (
+                    <select 
+                      className="form-input" 
+                      value={manualScopeValue} 
+                      onChange={(e) => setManualScopeValue(e.target.value)}
+                      style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    >
+                      {activeTopics.map((t, idx) => (
+                        <option key={idx} value={t.name}>{t.name}</option>
+                      ))}
+                      <option value="Custom">Custom Topic Name</option>
+                    </select>
+                  )}
+                </div>
+
+                {manualScopeValue === 'Custom' && (
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Custom Scope Name *</label>
+                    <input 
+                      className="form-input"
+                      placeholder={manualScope === 'unit' ? "e.g. Unit 7: Advanced Neural Networks" : "e.g. Action Potential Propagation"}
+                      value={customScopeValue}
+                      onChange={(e) => setCustomScopeValue(e.target.value)}
+                      required
+                      style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    />
+                  </div>
+                )}
 
                 {/* Summary Goal Selection: Recommended/Default is Time Management */}
                 <div className="form-group">
@@ -499,7 +581,7 @@ export default function NotesPage() {
 
                 {/* File Upload Zone */}
                 <div className="form-group">
-                  <label className="form-label" style={{ fontSize: '0.75rem' }}>Upload Unit Document File (PDF, DOCX, TXT, Image)</label>
+                  <label className="form-label" style={{ fontSize: '0.75rem' }}>Upload Unit/Topic Document Files (Multiple Allowed)</label>
                   <div 
                     className={`flex-col flex-center ${dragActive ? 'drag-active' : ''}`}
                     onDragEnter={handleDrag}
@@ -518,11 +600,12 @@ export default function NotesPage() {
                   >
                     <div style={{ fontSize: '1.4rem' }}>📁</div>
                     <div style={{ fontSize: '0.72rem', fontWeight: 600 }}>
-                      {formFile ? `Selected: ${formFile.name}` : 'Drag file here or click to browse'}
+                      {formFiles.length > 0 ? `Selected ${formFiles.length} file(s): ${formFiles.map(f => f.name).join(', ')}` : 'Drag files here or click to browse'}
                     </div>
                     <input 
                       id="file-upload-input" 
                       type="file" 
+                      multiple
                       accept=".txt,.md,.pdf,.docx,image/*"
                       onChange={handleFileChange} 
                       style={{ display: 'none' }} 
@@ -541,7 +624,7 @@ export default function NotesPage() {
                     value={form.text}
                     onChange={(e) => setForm(f => ({ ...f, text: e.target.value }))}
                     style={{ fontSize: '0.8rem', padding: '8px 12px' }}
-                    required={!formFile}
+                    required={formFiles.length === 0}
                   />
                 </div>
 

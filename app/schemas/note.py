@@ -9,6 +9,7 @@ class NoteCreate(BaseModel):
     text: str = Field(..., description="Raw note text content")
     subject_tag: str = Field(..., description="Subject tag for the note")
     summary_type: Optional[str] = "general"
+    description: Optional[str] = ""
 
 
 class NoteUpdate(BaseModel):

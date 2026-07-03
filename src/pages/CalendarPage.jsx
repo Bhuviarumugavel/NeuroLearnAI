@@ -21,9 +21,8 @@ export default function CalendarPage() {
 
   const [loadingLocal, setLoadingLocal] = useState(false);
 
-  // June 2026 anchor (matches conversation/project timeline)
-  const [currentDate, setCurrentDate] = useState(new Date(2026, 5, 21)); 
-  const [selectedDateStr, setSelectedDateStr] = useState('2026-06-21'); // Default selected day
+  const [currentDate, setCurrentDate] = useState(new Date()); 
+  const [selectedDateStr, setSelectedDateStr] = useState(new Date().toISOString().split('T')[0]); // Default selected day
 
   // Modal Interactive States (for actions)
   const [clickedDateStr, setClickedDateStr] = useState(null); // 'YYYY-MM-DD'

@@ -16,7 +16,7 @@ client = OpenAI(
     timeout=60.0,
 )
 
-MODEL = "google/gemini-2.5-flash"
+MODEL = "openrouter/free"
 
 
 def _parse_json_response(content: str):

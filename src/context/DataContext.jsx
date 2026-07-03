@@ -87,6 +87,53 @@ export function DataProvider({ children }) {
     }
   }, [user, refreshSubjects, refreshNotes, refreshReminders, refreshQuizzes, refreshSummary]);
 
+  const [notifiedReminderIds, setNotifiedReminderIds] = useState(new Set());
+
+  // Request browser Notification permission on login/mount
+  useEffect(() => {
+    if (user && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, [user]);
+
+  // Real-time study alert checker polling loop
+  useEffect(() => {
+    if (!user || reminders.length === 0) return;
+
+    const interval = setInterval(() => {
+      const now = new Date();
+      reminders.forEach((r) => {
+        const id = r._id || r.id;
+        const remindTime = new Date(r.remind_at);
+        
+        // Trigger if reminder time has arrived and hasn't been fired in this session
+        if (remindTime <= now && !notifiedReminderIds.has(id)) {
+          // Avoid triggering extremely old alerts (older than 15 mins)
+          const fifteenMinsAgo = new Date(now.getTime() - 15 * 60 * 1000);
+          if (remindTime >= fifteenMinsAgo) {
+            if ('Notification' in window && Notification.permission === 'granted') {
+              new Notification("📚 NeurolearnAI Study Alert!", {
+                body: r.message,
+                icon: "/favicon.ico"
+              });
+            } else {
+              // Toast fallback
+              alert(`🔔 Study Alert: ${r.message}`);
+            }
+          }
+          
+          setNotifiedReminderIds(prev => {
+            const next = new Set(prev);
+            next.add(id);
+            return next;
+          });
+        }
+      });
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [user, reminders, notifiedReminderIds]);
+
   // Automatically refresh all data when the user logs in
   useEffect(() => {
     if (user) {

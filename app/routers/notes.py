@@ -42,6 +42,7 @@ async def create_note(
         original_text=request.text,
         summary=summary,
         note_type="manual",
+        description=getattr(request, "description", ""),
     )
     now = datetime.now(timezone.utc).isoformat()
     note_doc["created_at"] = now
@@ -202,6 +203,7 @@ async def auto_generate_notes(
 async def upload_file_notes(
     file: UploadFile = File(...),
     subject_tag: str = Form(...),
+    description: str = Form(""),
     summary_type: str = Form("general"),
     user: dict = Depends(get_current_user_optional),
 ):
@@ -295,6 +297,7 @@ async def upload_file_notes(
         original_text=text,
         summary=summary,
         note_type="manual",
+        description=description,
     )
     now = datetime.now(timezone.utc).isoformat()
     note_doc["created_at"] = now

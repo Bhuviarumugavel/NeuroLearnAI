@@ -11,7 +11,7 @@ const COLORS = ['#7c3aed','#3b82f6','#10b981','#f59e0b','#ec4899','#06b6d4','#ef
 const PRIORITIES = ['Low', 'Medium', 'High'];
 
 export default function SubjectsPage() {
-  const { subjects, refreshSubjects, refreshNotes, refreshSummary } = useData();
+  const { subjects, refreshSubjects, refreshNotes, refreshSummary, plans } = useData();
 
   // Selected active subject
   const [selectedSubId, setSelectedSubId] = useState(null);
@@ -24,7 +24,10 @@ export default function SubjectsPage() {
   // Manual Notes Upload States (for selected subject)
   const [manualText, setManualText] = useState('');
   const [manualTitle, setManualTitle] = useState('');
-  const [manualFile, setManualFile] = useState(null);
+  const [manualFiles, setManualFiles] = useState([]); // Array for multiple files
+  const [manualScope, setManualScope] = useState('unit'); // 'unit' | 'topic'
+  const [manualScopeValue, setManualScopeValue] = useState('Unit 1');
+  const [customScopeValue, setCustomScopeValue] = useState('');
   
   const [saving, setSaving] = useState(false);
   const [uploadingManual, setUploadingManual] = useState(false);
@@ -189,8 +192,9 @@ export default function SubjectsPage() {
     e.preventDefault();
     if (!activeSub) return;
 
-    if (!manualFile && !manualText.trim()) {
-      setError('Please paste study content or upload a file.');
+    const hasFiles = manualFiles.length > 0;
+    if (!hasFiles && !manualText.trim()) {
+      setError('Please paste study content or select one or more files.');
       return;
     }
 
@@ -198,24 +202,34 @@ export default function SubjectsPage() {
     setError('');
     setSuccessMsg('');
     try {
-      if (manualFile) {
-        const formData = new FormData();
-        formData.append('file', manualFile);
-        formData.append('subject_tag', activeSub.name);
-        
-        await api.post('/api/notes/upload-file', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
+      const scopeVal = manualScopeValue === 'Custom' ? customScopeValue : manualScopeValue;
+      const scopeDesc = `${manualScope === 'unit' ? 'Unit' : 'Topic'}: ${scopeVal}`;
+
+      if (hasFiles) {
+        // Upload each file sequentially
+        for (const file of manualFiles) {
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('subject_tag', activeSub.name);
+          formData.append('description', scopeDesc);
+          
+          await api.post('/api/notes/upload-file', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          });
+        }
       } else {
         await api.post('/api/notes', {
           text: manualText,
-          subject_tag: activeSub.name
+          subject_tag: activeSub.name,
+          description: scopeDesc
         });
       }
-      setSuccessMsg('Study notes uploaded and summarized successfully!');
+      
+      setSuccessMsg(`Successfully uploaded and summarized ${hasFiles ? manualFiles.length : 1} study guide item(s) (${manualScope}-wise)!`);
       setManualText('');
       setManualTitle('');
-      setManualFile(null);
+      setManualFiles([]);
+      setCustomScopeValue('');
       
       // Update global context states (library + dashboard metrics)
       await Promise.all([refreshNotes(), refreshSummary()]);
@@ -227,10 +241,13 @@ export default function SubjectsPage() {
   };
 
   const handleManualFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      setManualFile(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      setManualFiles(Array.from(e.target.files));
     }
   };
+
+  const activePlan = plans?.find(p => p.subject_name === activeSub?.name);
+  const activeTopics = activePlan?.topics || [];
 
   return (
     <div className="page-container animate-slide-up">
@@ -478,25 +495,84 @@ export default function SubjectsPage() {
                 
                 <form onSubmit={handleManualNotesUpload} className="flex-col" style={{ gap: '10px' }}>
                   <div className="form-group">
-                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Note Title (optional)</label>
-                    <input 
+                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Notes Scope / Type</label>
+                    <select 
                       className="form-input" 
-                      placeholder="e.g. Chapter 1 Notes" 
-                      value={manualTitle}
-                      onChange={(e) => setManualTitle(e.target.value)}
-                      style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                    />
+                      value={manualScope} 
+                      onChange={(e) => {
+                        setManualScope(e.target.value);
+                        setManualScopeValue(e.target.value === 'unit' ? 'Unit 1' : (activeTopics[0]?.name || 'Custom'));
+                      }}
+                      style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    >
+                      <option value="unit">Unit-wise</option>
+                      <option value="topic">Topic-wise</option>
+                    </select>
                   </div>
+
                   <div className="form-group">
-                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Select Document File</label>
+                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Select Unit or Topic</label>
+                    {manualScope === 'unit' ? (
+                      <select 
+                        className="form-input" 
+                        value={manualScopeValue} 
+                        onChange={(e) => setManualScopeValue(e.target.value)}
+                        style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                      >
+                        <option value="Unit 1">Unit 1</option>
+                        <option value="Unit 2">Unit 2</option>
+                        <option value="Unit 3">Unit 3</option>
+                        <option value="Unit 4">Unit 4</option>
+                        <option value="Unit 5">Unit 5</option>
+                        <option value="Unit 6">Unit 6</option>
+                        <option value="Custom">Custom Unit Name</option>
+                      </select>
+                    ) : (
+                      <select 
+                        className="form-input" 
+                        value={manualScopeValue} 
+                        onChange={(e) => setManualScopeValue(e.target.value)}
+                        style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                      >
+                        {activeTopics.map((t, idx) => (
+                          <option key={idx} value={t.name}>{t.name}</option>
+                        ))}
+                        <option value="Custom">Custom Topic Name</option>
+                      </select>
+                    )}
+                  </div>
+
+                  {manualScopeValue === 'Custom' && (
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '0.72rem' }}>Custom Scope Name *</label>
+                      <input 
+                        className="form-input"
+                        placeholder={manualScope === 'unit' ? "e.g. Unit 7: Advanced Neural Networks" : "e.g. Action Potential Propagation"}
+                        value={customScopeValue}
+                        onChange={(e) => setCustomScopeValue(e.target.value)}
+                        required
+                        style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontSize: '0.72rem' }}>Select Document Files (Multiple Allowed)</label>
                     <input 
                       type="file" 
+                      multiple
                       className="form-input" 
                       accept=".txt,.md,.pdf,.docx,image/*"
                       onChange={handleManualFileChange} 
                       style={{ fontSize: '0.8rem', padding: '6px' }}
                     />
+                    {manualFiles.length > 0 && (
+                      <div className="text-xs text-muted" style={{ marginTop: '4px' }}>
+                        Selected {manualFiles.length} file(s): {manualFiles.map(f => f.name).join(', ')}
+                      </div>
+                    )}
                   </div>
+                  
                   <div className="form-group">
                     <label className="form-label" style={{ fontSize: '0.72rem' }}>Or Paste Note Content *</label>
                     <textarea 
@@ -505,7 +581,7 @@ export default function SubjectsPage() {
                       rows={4}
                       value={manualText}
                       onChange={(e) => setManualText(e.target.value)}
-                      required={!manualFile}
+                      required={manualFiles.length === 0}
                       style={{ fontSize: '0.8rem', padding: '8px 12px' }}
                     />
                   </div>
