@@ -2,7 +2,7 @@ import httpx
 import sys
 
 BASE_URL = "http://localhost:8000"
-TIMEOUT = 25.0
+TIMEOUT = 45.0
 
 def log_test(name, success, message=""):
     status = "[PASS]" if success else "[FAIL]"

@@ -27,7 +27,7 @@ client = OpenAI(
 MODEL = "google/gemini-2.5-flash"
 
 
-def _execute_completion_with_rotation(model: str, messages: list, max_tokens: int, temperature: float = 0.7) -> str:
+def _execute_completion_with_rotation(model: str, messages: list, max_tokens: int, temperature: float = 0.7, timeout: float = 15.0) -> str:
     """
     Execute chat completion with dynamic rotation over available API keys.
     If a key fails due to credit token reservation (HTTP 402), it dynamically reduces max_tokens to the affordable limit and retries.
@@ -46,7 +46,8 @@ def _execute_completion_with_rotation(model: str, messages: list, max_tokens: in
             temp_client = OpenAI(
                 base_url=OPENROUTER_BASE_URL,
                 api_key=key,
-                timeout=15.0,
+                timeout=timeout,
+                max_retries=0,
             )
             for attempt in range(1, retries_per_key + 1):
                 try:
@@ -86,6 +87,11 @@ def _execute_completion_with_rotation(model: str, messages: list, max_tokens: in
                         logger.warning("Low balance detected (HTTP 402). Moving to next key immediately.")
                         break
 
+                    # If it's a rate limit (429), move to the next key immediately without sleeping
+                    if status_code == 429 or "429" in err_msg or "rate limit" in err_msg.lower() or "too many requests" in err_msg.lower():
+                        logger.warning("Rate limit hit (HTTP 429). Moving to next key immediately.")
+                        break
+
                     # Last attempt for this key
                     if attempt == retries_per_key:
                         break
@@ -112,10 +118,8 @@ def _safe_chat_completion(messages: list, max_tokens: int = 600, temperature: fl
     optimized_max_tokens = min(max_tokens, 600)
     
     fallback_models = [
-        "google/gemma-4-31b-it:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
         "meta-llama/llama-3.2-3b-instruct:free",
-        "qwen/qwen3-coder:free"
+        "google/gemma-4-26b-a4b-it:free"
     ]
     
     # 1. Try primary paid model with key rotation and retry logic
@@ -124,7 +128,8 @@ def _safe_chat_completion(messages: list, max_tokens: int = 600, temperature: fl
             model=MODEL,
             messages=messages,
             max_tokens=optimized_max_tokens,
-            temperature=temperature
+            temperature=temperature,
+            timeout=5.0
         )
         logger.info(f"Primary model {MODEL} call succeeded.")
         return content
@@ -138,7 +143,8 @@ def _safe_chat_completion(messages: list, max_tokens: int = 600, temperature: fl
                 model=fallback,
                 messages=messages,
                 max_tokens=optimized_max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                timeout=3.0
             )
             logger.info(f"Fallback model {fallback} succeeded!")
             return content
@@ -290,15 +296,23 @@ def summarize_image(base64_image: str, mime_type: str, summary_type: str = "gene
     except Exception as e:
         print(f"[AI-ENGINE-WARN] Multimodal primary model failed on all keys: {e}")
         try:
-            print("[AI-ENGINE-INFO] Attempting multimodal fallback: nvidia/nemotron-nano-12b-v2-vl:free")
+            print("[AI-ENGINE-INFO] Attempting multimodal fallback: openrouter/free")
             return _execute_completion_with_rotation(
-                model="nvidia/nemotron-nano-12b-v2-vl:free",
+                model="openrouter/free",
                 messages=messages,
                 max_tokens=optimized_max_tokens
             )
         except Exception as fe:
-            print(f"[AI-ENGINE-WARN] Multimodal fallback failed on all keys: {fe}")
-            return f"Offline Mock Summary for Image (Could not connect to multimodal AI): {str(e)}"
+            print(f"[AI-ENGINE-WARN] openrouter/free fallback failed: {fe}. Trying secondary multimodal fallback: nvidia/nemotron-nano-12b-v2-vl:free")
+            try:
+                return _execute_completion_with_rotation(
+                    model="nvidia/nemotron-nano-12b-v2-vl:free",
+                    messages=messages,
+                    max_tokens=optimized_max_tokens
+                )
+            except Exception as se:
+                print(f"[AI-ENGINE-WARN] All multimodal fallbacks failed: {se}")
+                return f"Offline Mock Summary for Image (Could not connect to multimodal AI): {str(e)}"
 
 
 
@@ -325,10 +339,37 @@ def generate_structured_quiz(raw_text: str, num_questions: int = 5, user_ability
         )
         result = _parse_json_response(content)
         if result:
-            return result
-        return [{"question": "Could not parse quiz", "options": ["A", "B", "C", "D"], "answer": "A"}]
+            # Normalize dictionary responses
+            if isinstance(result, dict):
+                for key in ["questions", "quiz", "items"]:
+                    if key in result and isinstance(result[key], list):
+                        result = result[key]
+                        break
+                else:
+                    if "question" in result:
+                        result = [result]
+                    else:
+                        result = []
+
+            # Validate list of questions
+            if isinstance(result, list):
+                valid_questions = []
+                for item in result:
+                    if isinstance(item, dict) and "question" in item:
+                        q_text = item.get("question", "Question")
+                        opts = item.get("options", ["A", "B", "C", "D"])
+                        ans = item.get("answer", "A")
+                        valid_questions.append({
+                            "question": q_text,
+                            "options": opts if isinstance(opts, list) else ["A", "B", "C", "D"],
+                            "answer": ans
+                        })
+                if valid_questions:
+                    return valid_questions
+
+        return [{"question": f"Could not parse quiz question {i+1}", "options": ["A", "B", "C", "D"], "answer": "A"} for i in range(num_questions)]
     except Exception:
-        return [{"question": "Offline Mock Question?", "options": ["A", "B", "C", "D"], "answer": "A"}]
+        return [{"question": f"Offline Mock Question {i+1}?", "options": ["A", "B", "C", "D"], "answer": "A"} for i in range(num_questions)]
 
 
 # ─────────────────────────────────────────────────────────
