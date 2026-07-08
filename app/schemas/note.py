@@ -14,6 +14,10 @@ class NoteCreate(BaseModel):
     syllabus: Optional[str] = ""
     topic: Optional[str] = ""
     book: Optional[str] = ""
+    file_name: Optional[str] = ""
+    file_type: Optional[str] = ""
+    file_data: Optional[str] = ""
+    upload_source: Optional[str] = ""
 
 
 class NoteUpdate(BaseModel):
@@ -44,6 +48,10 @@ class NoteResponse(BaseModel):
     syllabus: Optional[str] = ""
     topic: Optional[str] = ""
     book: Optional[str] = ""
+    file_name: Optional[str] = ""
+    file_type: Optional[str] = ""
+    file_data: Optional[str] = ""
+    upload_source: Optional[str] = ""
 
 
 class NotesListResponse(BaseModel):

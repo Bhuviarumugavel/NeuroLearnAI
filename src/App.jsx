@@ -18,6 +18,7 @@ import CalendarPage    from './pages/CalendarPage';
 import StudyLibraryPage from './pages/StudyLibraryPage';
 import ProfilePage     from './pages/ProfilePage';
 import RemindersPage   from './pages/RemindersPage';
+import AutomationPage  from './pages/AutomationPage';
 import { StudyTimerProvider } from './context/StudyTimerContext';
 
 export default function App() {
@@ -50,6 +51,7 @@ export default function App() {
                 <Route path="library"     element={<StudyLibraryPage />} />
                 <Route path="notifications" element={<RemindersPage />} />
                 <Route path="profile"     element={<ProfilePage />} />
+                <Route path="automation"  element={<AutomationPage />} />
               </Route>
 
               {/* Catch-all */}

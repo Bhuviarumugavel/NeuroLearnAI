@@ -21,6 +21,40 @@ def serialize_doc(doc: dict) -> dict:
     return doc
 
 
+import re
+from datetime import timedelta
+
+def get_user_preferred_notification_hour(availability: str) -> int:
+    """Parse user's preferred study availability slot and determine target hour.
+    If slot contains range like '5-9', set to 5 (or 17:00 PM for standard Evening fallback).
+    """
+    if not availability:
+        return 17  # Default to 5 PM fallback
+    
+    # Try finding patterns like "5-9" or "6-12"
+    match = re.search(r'(\d+)\s*-\s*(\d+)', availability)
+    if match:
+        first_num = int(match.group(1))
+        if first_num <= 12:
+            # Evening or PM availability mapping
+            if "pm" in availability.lower() or "evening" in availability.lower() or first_num in [5, 6, 7, 8, 9]:
+                return first_num + 12
+            return first_num
+        return first_num
+
+    avail_lower = availability.lower()
+    if "morning" in avail_lower:
+        return 6
+    elif "afternoon" in avail_lower:
+        return 12
+    elif "evening" in avail_lower:
+        return 17  # 5 PM
+    elif "night" in avail_lower:
+        return 22  # 10 PM
+    elif "weekend" in avail_lower:
+        return 9
+    return 17  # Fallback to 5 PM
+
 # ── POST /api/reminders/trigger ──────────────────────────
 
 @router.post("/trigger")
@@ -29,14 +63,35 @@ async def schedule_reminder(
     bg_tasks: BackgroundTasks,
     user: dict = Depends(get_current_user_optional),
 ):
-    """Schedule a study reminder via Celery/Redis or local fallback."""
+    """Schedule a study reminder via Celery/Redis or local fallback, matching user preference time."""
     user_id = user["_id"] if user else "anonymous"
 
-    # Save to MongoDB
+    # Fetch user availability routine
+    availability = "Evening"
+    if user and "study_preferences" in user:
+        availability = user["study_preferences"].get("availability", "Evening")
+
+    target_hour = get_user_preferred_notification_hour(availability)
+
+    # Calculate target reminder time
+    remind_time = None
+    if request.remind_at:
+        try:
+            # Parse requested date
+            remind_time = datetime.fromisoformat(request.remind_at.replace('Z', '+00:00'))
+        except Exception:
+            pass
+
+    if not remind_time:
+        remind_time = datetime.now(timezone.utc).replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        # Shift to tomorrow if scheduled target hour has already elapsed today
+        if remind_time < datetime.now(timezone.utc):
+            remind_time += timedelta(days=1)
+
     reminder_doc = {
         "user_id": user_id,
         "message": request.message,
-        "remind_at": request.remind_at or datetime.now(timezone.utc).isoformat(),
+        "remind_at": remind_time.isoformat(),
         "status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -47,7 +102,7 @@ async def schedule_reminder(
     except Exception:
         reminder_id = "offline"
 
-    # Attempt Celery task, fallback to local
+    # Attempt Celery task, fallback to local background tasks
     try:
         import redis
         from app.config import REDIS_URL

@@ -9,6 +9,7 @@ class QuizGenerateRequest(BaseModel):
     text: str = Field(..., description="Source text to generate quiz from")
     subject: str = Field(default="General", description="Subject tag")
     num_questions: int = Field(default=5, ge=1, le=20, description="Number of questions")
+    topic: Optional[str] = ""
 
 
 class QuizSubmitRequest(BaseModel):

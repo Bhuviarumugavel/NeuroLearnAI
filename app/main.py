@@ -64,8 +64,8 @@ async def check_due_reminders_loop():
                     f"NeurolearnAI Assistant"
                 )
                 
-                # Send email
-                send_email_notification(user_email, subject, body)
+                # Send email in a separate thread so it doesn't block the FastAPI event loop
+                await asyncio.to_thread(send_email_notification, user_email, subject, body)
                 
                 # Update reminder status to fired
                 await reminders_collection.update_one(

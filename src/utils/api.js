@@ -13,7 +13,7 @@ const TOKEN_KEY = 'neurolearn_token';
 const api = axios.create({
   baseURL: API_BASE,
   headers: { 'Content-Type': 'application/json' },
-  timeout: 15000,
+  timeout: 60000,
 });
 
 // ── Request Interceptor: inject JWT ───────────────────────────

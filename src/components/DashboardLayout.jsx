@@ -112,6 +112,13 @@ export default function DashboardLayout() {
             >
               ⚙️ Subject Config
             </Link>
+            <Link 
+              to="/automation" 
+              onClick={() => setShowSettings(false)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 12px', color: 'var(--text-primary)', textDecoration: 'none', fontSize: '0.8rem', fontWeight: 600, borderRadius: 'var(--radius-sm)' }}
+            >
+              🤖 UiPath Bots
+            </Link>
             
             <div style={{ height: '1px', background: 'var(--border-subtle)', margin: '4px 0' }} />
             

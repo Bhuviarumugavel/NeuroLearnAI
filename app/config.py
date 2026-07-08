@@ -12,7 +12,12 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 # ── OpenRouter AI ─────────────────────────────────────────
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY_2 = os.getenv("OPENAI_API_KEY_2")
+OPENAI_API_KEY_3 = os.getenv("OPENAI_API_KEY_3")
 OPENROUTER_BASE_URL = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+
+# Collect all available API keys, defaulting to [None] to ensure safe iteration
+API_KEYS = [k for k in [OPENAI_API_KEY, OPENAI_API_KEY_2, OPENAI_API_KEY_3] if k] or [None]
 
 # ── JWT Authentication ────────────────────────────────────
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "neurolearn-ai-change-me")

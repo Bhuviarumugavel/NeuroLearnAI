@@ -53,7 +53,8 @@ async def generate_quiz(
         study_prefs = user.get("study_preferences", {})
         user_ability = study_prefs.get("education_status") or "Medium"
 
-    quiz_data = generate_structured_quiz(enriched_text, request.num_questions, user_ability)
+    import asyncio
+    quiz_data = await asyncio.to_thread(generate_structured_quiz, enriched_text, request.num_questions, user_ability, request.topic)
 
     # Persist quiz to MongoDB
     quiz_doc = create_quiz_document(
@@ -61,15 +62,56 @@ async def generate_quiz(
         subject=request.subject,
         source_text=request.text,
         questions=quiz_data,
+        topic=request.topic,
     )
     quiz_doc["created_at"] = datetime.now(timezone.utc).isoformat()
-
+ 
     try:
         result = await quizzes_collection.insert_one(quiz_doc)
         quiz_id = str(result.inserted_id)
     except Exception:
         quiz_id = "offline"
 
+    # Automatically schedule Calendar reminders for Quiz and Revision
+    try:
+        from app.database import reminders_collection
+        from datetime import timedelta
+        from app.routers.reminders import get_user_preferred_notification_hour
+
+        # Fetch user study availability routines
+        availability = "Evening"
+        if user and "study_preferences" in user:
+            availability = user["study_preferences"].get("availability", "Evening")
+        target_hour = get_user_preferred_notification_hour(availability)
+
+        # Set reminder time based on preferences
+        remind_time = datetime.now(timezone.utc).replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        if remind_time < datetime.now(timezone.utc):
+            remind_time += timedelta(days=1)
+
+        # 1. Calendar entry: Quiz attempted today scheduled at preferred slot
+        quiz_reminder = {
+            "user_id": user_id,
+            "message": f"Quiz: {request.subject} (Topic: {request.topic or 'General'})",
+            "remind_at": remind_time.isoformat(),
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await reminders_collection.insert_one(quiz_reminder)
+        
+        # 2. Reframe future revision topics (spaced repetition in 3 days) at preferred slot
+        rev_time = (datetime.now(timezone.utc) + timedelta(days=3)).replace(hour=target_hour, minute=0, second=0, microsecond=0)
+        rev_reminder = {
+            "user_id": user_id,
+            "message": f"Revision Reminder: Re-evaluate {request.subject} (Topic: {request.topic or 'General'})",
+            "remind_at": rev_time.isoformat(),
+            "status": "pending",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        await reminders_collection.insert_one(rev_reminder)
+    except Exception as rem_ex:
+        print(f"[QUIZ-GEN] Failed scheduling reminders: {rem_ex}")
+ 
     return {
         "status": "success",
         "quiz_id": quiz_id,

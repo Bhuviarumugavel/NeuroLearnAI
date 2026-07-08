@@ -14,6 +14,10 @@ def create_note_document(
     syllabus: str = "",
     topic: str = "",
     book: str = "",
+    file_name: str = "",
+    file_type: str = "",
+    file_data: str = "",
+    upload_source: str = "",
 ) -> dict:
     """Create a note document ready for MongoDB insertion."""
     return {
@@ -33,4 +37,8 @@ def create_note_document(
         "syllabus": syllabus,
         "topic": topic,
         "book": book,
+        "file_name": file_name,
+        "file_type": file_type,
+        "file_data": file_data,
+        "upload_source": upload_source,
     }

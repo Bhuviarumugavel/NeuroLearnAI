@@ -57,6 +57,7 @@ export default function QuizPage() {
   const { startSession, stopSession } = useStudyTimer();
 
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
+  const [topicText, setTopicText] = useState('');
   const [numQuestions] = useState(10); // Default to 10 questions
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -110,17 +111,22 @@ export default function QuizPage() {
       if (subNotes.length === 0) {
         sourceText = `Create a test on the key concepts of the course: ${subjectName}`;
       } else {
-        sourceText = subNotes.map(n => `${n.title || ''}\n${n.original_text || n.summary}`).join('\n\n');
+        sourceText = subNotes.map(n => `${n.title || ''}\n${n.original_text || n.summary || n.generated_notes || ''}`).join('\n\n');
       }
     } catch (err) {
       sourceText = `Generate MCQ assessment questions on: ${subjectName}`;
+    }
+
+    if (topicText.trim()) {
+      sourceText = `Focus Topic: ${topicText}\n\n` + sourceText;
     }
 
     try {
       const res = await api.post('/api/quiz/generate', {
         text: sourceText,
         subject: subjectName,
-        num_questions: numQuestions
+        num_questions: numQuestions,
+        topic: topicText.trim()
       });
 
       if (res.data.questions && res.data.questions.length > 0) {
@@ -228,6 +234,19 @@ export default function QuizPage() {
                     ))}
                   </select>
                 </div>
+ 
+                {/* Optional Topic Selector */}
+                <div className="form-group">
+                  <label className="form-label" htmlFor="quiz-topic-input" style={{ fontSize: '0.75rem' }}>Optional Topic Name (Focus on specific topic)</label>
+                  <input
+                    id="quiz-topic-input"
+                    className="form-input"
+                    placeholder="e.g. Synapses"
+                    value={topicText}
+                    onChange={(e) => setTopicText(e.target.value)}
+                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                  />
+                </div>
 
                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', background: 'var(--bg-input)', padding: '10px', borderRadius: 'var(--radius-md)' }}>
                   📝 This will start a <strong>10-question</strong> MCQ quiz based on your subject notes library.
@@ -248,12 +267,12 @@ export default function QuizPage() {
           {/* Past quiz history */}
           <div className="card" style={{ padding: '16px' }}>
             <h3 className="section-title" style={{ fontSize: '0.95rem', marginBottom: '8px' }}>📜 Recent Quiz Scores</h3>
-            {quizzes.length === 0 ? (
+            {(!quizzes || quizzes.length === 0) ? (
               <p className="text-muted text-xs">No quizzes taken yet.</p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {quizzes.slice(0, 4).map((h, i) => {
-                  const lastAttempt = h.attempts?.[h.attempts.length - 1];
+                  const lastAttempt = Array.isArray(h.attempts) && h.attempts.length > 0 ? h.attempts[h.attempts.length - 1] : null;
                   const scorePct = lastAttempt ? Math.round((lastAttempt.score / lastAttempt.total) * 100) : 0;
                   
                   return (

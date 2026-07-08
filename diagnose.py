@@ -96,8 +96,8 @@ async def main():
     mongo_ok, mongo_msg = await check_mongodb()
     redis_ok, redis_msg = check_redis()
     uipath_ok, uipath_msg = await check_uipath()
-    frontend_ok, frontend_msg = await check_web_service("http://localhost:5173", "Frontend (Vite)")
-    backend_ok, backend_msg = await check_web_service("http://localhost:8000/health", "Backend (FastAPI)")
+    frontend_ok, frontend_msg = await check_web_service("http://127.0.0.1:5173", "Frontend (Vite)")
+    backend_ok, backend_msg = await check_web_service("http://127.0.0.1:8000/health", "Backend (FastAPI)")
     
     print("\n" + "="*60)
     print("DIAGNOSTICS SUMMARY CHECKLIST")

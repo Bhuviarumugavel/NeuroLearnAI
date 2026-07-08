@@ -38,8 +38,8 @@ async def generate_all_topic_notes_task(user_id: str, subject_name: str, topics:
         # Gather manual notes context
         uploaded_context = ""
         try:
-            from app.database import notes_collection
             cursor = notes_collection.find({
+
                 "user_id": user_id,
                 "subject": subject_name,
                 "type": "manual"
@@ -71,7 +71,8 @@ async def generate_all_topic_notes_task(user_id: str, subject_name: str, topics:
 
         # Call AI
         try:
-            notes_text = generate_notes_for_topic(topic_name, subject_name, web_context, uploaded_context)
+            import asyncio
+            notes_text = await asyncio.to_thread(generate_notes_for_topic, topic_name, subject_name, web_context, uploaded_context)
             note_doc = create_note_document(
                 user_id=user_id,
                 subject_tag=subject_name,
@@ -104,7 +105,9 @@ async def generate_plan(
     user_id = user["_id"] if user else "anonymous"
 
     # AI generates the topic schedule
-    topics_raw = generate_study_plan(
+    import asyncio
+    topics_raw = await asyncio.to_thread(
+        generate_study_plan,
         request.description,
         request.subject_name,
         request.deadline,
@@ -344,6 +347,41 @@ async def update_progress(plan_id: str, update: StudyPlanProgressUpdate):
             "completed_topics": completed_count,
             "total_topics": len(topics),
         }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── PUT /api/study-plans/{plan_id}/topic-details ─────────
+
+@router.put("/{plan_id}/topic-details")
+async def update_topic_details(plan_id: str, payload: dict):
+    """Edit topic details (name, duration) at topic_index."""
+    topic_index = payload.get("topic_index")
+    name = payload.get("name")
+    duration = payload.get("duration", 60)
+    
+    if topic_index is None or not name:
+        raise HTTPException(status_code=400, detail="topic_index and name are required.")
+        
+    try:
+        doc = await study_plans_collection.find_one({"_id": ObjectId(plan_id)})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Study plan not found")
+            
+        topics = doc.get("topics", [])
+        if topic_index < 0 or topic_index >= len(topics):
+            raise HTTPException(status_code=400, detail="Invalid topic index")
+            
+        topics[topic_index]["name"] = name
+        topics[topic_index]["duration"] = duration
+        
+        await study_plans_collection.update_one(
+            {"_id": ObjectId(plan_id)},
+            {"$set": {"topics": topics, "updated_at": datetime.now(timezone.utc).isoformat()}}
+        )
+        return {"status": "success", "topics": topics}
     except HTTPException:
         raise
     except Exception as e:

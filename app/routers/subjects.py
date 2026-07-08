@@ -101,27 +101,71 @@ async def update_subject(subject_id: str, subject: SubjectUpdate):
         )
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Subject not found")
+
+        # If exam deadline was changed, trigger AI study plan topic rescheduling
+        if "deadline" in update_data:
+            subject_doc = await subjects_collection.find_one({"_id": ObjectId(subject_id)})
+            if subject_doc:
+                sub_name = subject_doc.get("name")
+                user_id = subject_doc.get("user_id", "anonymous")
+                from app.database import study_plans_collection
+                plan = await study_plans_collection.find_one({"user_id": user_id, "subject_name": sub_name})
+                if plan:
+                    from app.ai_engine import generate_study_plan
+                    new_topics = generate_study_plan(
+                        description=subject_doc.get("description", ""),
+                        subject_name=sub_name,
+                        deadline=update_data["deadline"],
+                        daily_minutes=subject_doc.get("daily_study_minutes", 45)
+                    )
+                    if new_topics:
+                        await study_plans_collection.update_one(
+                            {"_id": plan["_id"]},
+                            {
+                                "$set": {
+                                    "topics": new_topics,
+                                    "deadline": update_data["deadline"],
+                                    "updated_at": datetime.now(timezone.utc).isoformat()
+                                }
+                            }
+                        )
+
         return {"status": "success", "modified": result.modified_count}
     except HTTPException:
         raise
-    except Exception:
-        return {"status": "offline_success"}
+    except Exception as e:
+        return {"status": "offline_success", "error": str(e)}
 
 
 # ── DELETE /api/subjects/{subject_id} ────────────────────
 
 @router.delete("/{subject_id}")
 async def delete_subject(subject_id: str):
-    """Delete a subject."""
+    """Delete a subject and all associated study plans, notes, and quizzes."""
     try:
-        result = await subjects_collection.delete_one({"_id": ObjectId(subject_id)})
-        if result.deleted_count == 0:
+        subject_doc = await subjects_collection.find_one({"_id": ObjectId(subject_id)})
+        if not subject_doc:
             raise HTTPException(status_code=404, detail="Subject not found")
+        
+        subject_name = subject_doc.get("name")
+        user_id = subject_doc.get("user_id", "anonymous")
+
+        # Delete the subject document
+        result = await subjects_collection.delete_one({"_id": ObjectId(subject_id)})
+        
+        # Cascade delete study plans, notes, and quizzes matching this user and subject name
+        from app.database import study_plans_collection, notes_collection, quizzes_collection
+        
+        if subject_name:
+            await study_plans_collection.delete_many({"user_id": user_id, "subject_name": subject_name})
+            await notes_collection.delete_many({"user_id": user_id, "subject": subject_name})
+            await quizzes_collection.delete_many({"user_id": user_id, "subject": subject_name})
+
         return {"status": "success"}
     except HTTPException:
         raise
-    except Exception:
-        return {"status": "offline_success"}
+    except Exception as e:
+        return {"status": "offline_success", "error": str(e)}
 
 
 # ── POST /api/subjects/{subject_id}/topics ───────────────

@@ -6,11 +6,13 @@ def create_quiz_document(
     subject: str,
     source_text: str,
     questions: list,
+    topic: str = "",
 ) -> dict:
     """Create a quiz document ready for MongoDB insertion."""
     return {
         "user_id": user_id,
         "subject": subject,
+        "topic": topic,
         "source_text": source_text[:500],  # Store first 500 chars as reference
         "questions": questions,
         "attempts": [],  # List of {score, total, answers, attempted_at}

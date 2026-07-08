@@ -14,40 +14,39 @@ import { useData } from '../context/DataContext';
 import { useStudyTimer } from '../context/StudyTimerContext';
 
 export default function NotesPage() {
-  const { subjects, notes, plans, refreshNotes, refreshSummary } = useData();
+  const { subjects, notes, plans, refreshNotes, refreshSummary, refreshAll } = useData();
   const { activeSubjectId, secondsElapsed, isActive, startSession, stopSession } = useStudyTimer();
 
   // Primary page tab: 'study' (Option 1) | 'manual' (Option 2)
   const [activeTab, setActiveTab] = useState('study');
 
-  // Manual summarizer form states
+  // AI Notes subject-wise tab selection state
+  const [aiSubjectTabId, setAiSubjectTabId] = useState('');
+
+  // Manual / Test Ready summarizer form states
   const [selectedSubject, setSelectedSubject] = useState('');
-  const [summaryType, setSummaryType] = useState('time_management'); // 'time_management' (default) | 'general'
-  const [form, setForm] = useState({ text: '', tags: '' });
+  const [manualText, setManualText] = useState('');
   const [formFiles, setFormFiles] = useState([]); // Multiple files
-  const [manualUnit, setManualUnit] = useState('');
-  const [manualSyllabus, setManualSyllabus] = useState('');
   const [manualTopic, setManualTopic] = useState('');
-  const [manualBook, setManualBook] = useState('');
   const [dragActive, setDragActive] = useState(false);
   const [loading, setLoading] = useState(false);
   const [successData, setSuccessData] = useState(null);
   const [error, setError] = useState('');
 
-  // Search/Filters
-  const [searchQuery, setSearchQuery] = useState('');
+  const [customTopicText, setCustomTopicText] = useState('');
   const [expandedNotes, setExpandedNotes] = useState({});
 
   const activeSub = subjects.find(s => (s._id || s.id) === selectedSubject);
   const activePlan = plans?.find(p => p.subject_name === activeSub?.name);
   const activeTopics = activePlan?.topics || [];
 
-  // Auto-select first subject in manual dropdown on load
+  // Auto-select first subject in dropdowns on load
   useEffect(() => {
-    if (subjects.length > 0 && !selectedSubject) {
-      setSelectedSubject(subjects[0]._id || subjects[0].id);
+    if (subjects.length > 0) {
+      if (!selectedSubject) setSelectedSubject(subjects[0]._id || subjects[0].id);
+      if (!aiSubjectTabId) setAiSubjectTabId(subjects[0]._id || subjects[0].id);
     }
-  }, [subjects, selectedSubject]);
+  }, [subjects, selectedSubject, aiSubjectTabId]);
 
   const handleDrag = (e) => {
     e.preventDefault();
@@ -91,6 +90,86 @@ export default function NotesPage() {
     }
   };
 
+  const handleAiGenerate = async (e) => {
+    e.preventDefault();
+    const activeSub = subjects.find(s => (s._id || s.id) === selectedSubject);
+    if (!activeSub) {
+      setError('Please add a subject in Subject Settings first.');
+      return;
+    }
+    const subjectName = activeSub.name;
+    const finalTopic = customTopicText.trim();
+
+    setLoading(true);
+    setError('');
+    setSuccessData(null);
+    try {
+      const res = await api.post('/api/notes/generate-auto', {
+        description: finalTopic ? `Notes for topic: ${finalTopic}` : `General study guide notes for subject: ${subjectName}`,
+        subject_name: subjectName
+      });
+
+      const notesText = res.data.notes || res.data.summary || "Summary generated successfully.";
+      setSuccessData({
+        summary: notesText,
+        subject: subjectName,
+        tags: [subjectName, finalTopic || 'General Study'].filter(Boolean)
+      });
+
+      // Trigger automatic "Summary Ready" reminder notification
+      try {
+        await api.post('/api/reminders/trigger', {
+          message: `Summary Ready: Study notes for ${subjectName}${finalTopic ? ` on "${finalTopic}"` : ''} are compiled!`,
+          remind_at: new Date().toISOString()
+        });
+      } catch (rErr) {
+        console.error("Failed to trigger summary reminder", rErr);
+      }
+
+      setCustomTopicText('');
+      await refreshAll();
+    } catch (err) {
+      setError(err.response?.data?.detail || 'AI note generation failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const triggerGenerateForTodayTopic = async (subject, topicName) => {
+    setLoading(true);
+    setError('');
+    setSuccessData(null);
+    try {
+      const res = await api.post('/api/notes/generate-auto', {
+        description: topicName ? `Notes for topic: ${topicName}` : `General study guide notes for subject: ${subject.name}`,
+        subject_name: subject.name
+      });
+
+      const notesText = res.data.notes || res.data.summary || "Summary generated successfully.";
+      setSuccessData({
+        summary: notesText,
+        subject: subject.name,
+        tags: [subject.name, topicName || 'General Study'].filter(Boolean)
+      });
+
+      // Trigger automatic "Summary Ready" reminder notification
+      try {
+        await api.post('/api/reminders/trigger', {
+          message: `Summary Ready: Study notes for ${subject.name}${topicName ? ` on "${topicName}"` : ''} are compiled!`,
+          remind_at: new Date().toISOString()
+        });
+      } catch (rErr) {
+        console.error("Failed to trigger summary reminder", rErr);
+      }
+
+      await refreshAll();
+    } catch (err) {
+      setError(err.response?.data?.detail || 'AI note generation failed.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const activeSub = subjects.find(s => (s._id || s.id) === selectedSubject);
@@ -100,9 +179,11 @@ export default function NotesPage() {
     }
     const subjectTag = activeSub.name;
 
+    const hasText = manualText.trim().length > 0;
     const hasFiles = formFiles.length > 0;
-    if (!hasFiles && !form.text.trim()) {
-      setError('Please paste study content or select one or more files.');
+
+    if (!hasText && !hasFiles) {
+      setError('Please select one or more files to upload or paste raw notes content.');
       return;
     }
 
@@ -111,54 +192,49 @@ export default function NotesPage() {
     setSuccessData(null);
 
     try {
-      const scopeDesc = `Unit: ${manualUnit || 'N/A'} | Topic: ${manualTopic || 'N/A'} | Book: ${manualBook || 'N/A'}`;
+      let filesToUpload = [...formFiles];
+      if (hasText) {
+        const textBlob = new Blob([manualText], { type: 'text/plain' });
+        const textFile = new File([textBlob], `${manualTopic || 'Raw_Notes'}.txt`, { type: 'text/plain' });
+        filesToUpload.push(textFile);
+      }
 
       let lastSummary = "";
-      if (hasFiles) {
-        // Upload each file sequentially
-        for (const file of formFiles) {
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('subject_tag', subjectTag);
-          formData.append('summary_type', summaryType);
-          formData.append('description', scopeDesc);
-          formData.append('unit', manualUnit);
-          formData.append('syllabus', manualSyllabus);
-          formData.append('topic', manualTopic);
-          formData.append('book', manualBook);
-          
-          const uploadRes = await api.post('/api/notes/upload-file', formData, {
-            headers: { 'Content-Type': 'multipart/form-data' }
-          });
-          lastSummary = uploadRes.data.summary || lastSummary;
-        }
-      } else {
-        const res = await api.post('/api/notes', {
-          text: form.text,
-          subject_tag: subjectTag,
-          summary_type: summaryType,
-          description: scopeDesc,
-          unit: manualUnit,
-          syllabus: manualSyllabus,
-          topic: manualTopic,
-          book: manualBook
+      // Upload each file sequentially
+      for (const file of filesToUpload) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('subject_tag', subjectTag);
+        formData.append('upload_source', 'manual_summarizer');
+        formData.append('summary_type', 'general');
+        formData.append('topic', manualTopic);
+
+        const uploadRes = await api.post('/api/notes/upload-file', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
         });
-        lastSummary = res.data.summary;
+        lastSummary = uploadRes.data.summary || lastSummary;
       }
 
       setSuccessData({
         summary: lastSummary || "Summary generated successfully.",
         subject: subjectTag,
-        tags: form.tags ? form.tags.split(',').map(t => t.trim()) : [subjectTag, summaryType === 'time_management' ? 'Time Management' : 'AI Summary']
+        tags: [subjectTag, manualTopic || 'Test Ready Summary'].filter(Boolean)
       });
 
-      setForm({ text: '', tags: '' });
-      setFormFiles([]);
-      setManualUnit('');
-      setManualSyllabus('');
+      // Trigger automatic "Upload Success" and "Summary Ready" reminder notification
+      try {
+        await api.post('/api/reminders/trigger', {
+          message: `Upload Success: Test Ready notes compiled for "${subjectTag}"!`,
+          remind_at: new Date().toISOString()
+        });
+      } catch (rErr) {
+        console.error("Failed to trigger upload reminder", rErr);
+      }
+
+      setManualText('');
       setManualTopic('');
-      setManualBook('');
-      await Promise.all([refreshNotes(), refreshSummary()]);
+      setFormFiles([]);
+      await refreshAll();
     } catch (err) {
       setError(err.response?.data?.detail || 'AI Summarization failed.');
     } finally {
@@ -171,7 +247,7 @@ export default function NotesPage() {
     if (!window.confirm('Delete this resource permanently?')) return;
     try {
       await api.delete(`/api/notes/${id}`);
-      await Promise.all([refreshNotes(), refreshSummary()]);
+      await refreshAll();
     } catch (err) {
       console.error(err);
     }
@@ -232,252 +308,243 @@ export default function NotesPage() {
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         <button 
           className={`btn ${activeTab === 'study' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => setActiveTab('study')}
+          onClick={() => {
+            setActiveTab('study');
+            setSuccessData(null);
+          }}
           style={{ flex: 1, fontSize: '0.8rem', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
         >
-          📚 Study Notes & Tracker
+          📚 AI Notes
         </button>
         <button 
           className={`btn ${activeTab === 'manual' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => setActiveTab('manual')}
+          onClick={() => {
+            setActiveTab('manual');
+            setSuccessData(null);
+          }}
           style={{ flex: 1, fontSize: '0.8rem', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
         >
-          ⚡ Manual Unit Summarizer
+          ⚡ Test Ready Notes
         </button>
       </div>
 
-      {/* OPTION 1: Study Notes & Time Tracker */}
+      {/* OPTION 1: AI Notes (Subject wise tabs) */}
       {activeTab === 'study' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          
-          {/* Notes list filter bar */}
-          <div className="card" style={{ padding: '12px 16px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>🔍 Search Notes:</span>
-            <input 
-              className="form-input" 
-              placeholder="Filter study notes content..." 
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{ flex: 1, fontSize: '0.78rem', height: '32px', padding: '6px 12px' }}
-            />
-          </div>
-
           {subjects.length === 0 ? (
-            <div className="card flex-col flex-center text-muted" style={{ padding: '40px 16px', textAlign: 'center' }}>
-              <div style={{ fontSize: '2rem' }}>📚</div>
-              <p style={{ fontSize: '0.82rem', marginTop: '8px' }}>No subjects added yet.</p>
+            <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Add a subject category first in settings.</p>
               <Link to="/subjects" className="btn btn-primary btn-sm mt-8">Configure Subjects</Link>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {subjects.map((sub) => {
-                const subId = sub._id || sub.id;
-                const isCurrentStudying = activeSubjectId === subId && isActive;
-                const subColor = sub.color || 'var(--accent-primary)';
-                
-                // Dynamic time of study calculation (database base + active session runtime)
-                const currentFocusSecs = (sub.study_time_seconds || 0) + (isCurrentStudying ? secondsElapsed : 0);
-                const currentFocusFormatted = formatFocusTime(currentFocusSecs);
-
-                // Fetch active scheduled topic
-                const activeTopic = getTodayTopicForSubject(sub.name);
-
-                // Fetch notes matching this subject
-                let matchingNotes = notes.filter(n => n.subject.toLowerCase() === sub.name.toLowerCase());
-                if (activeTopic) {
-                  const topicKeywords = activeTopic.name.toLowerCase();
-                  const topicSpecificNotes = matchingNotes.filter(n => 
-                    (n.summary || '').toLowerCase().includes(topicKeywords) || 
-                    (n.original_text || '').toLowerCase().includes(topicKeywords)
+            <>
+              {/* Subject-wise tabs selector row */}
+              <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '6px', borderBottom: '1px solid var(--border-subtle)' }}>
+                {subjects.map(s => {
+                  const isSelected = (s._id || s.id) === aiSubjectTabId;
+                  return (
+                    <button
+                      key={s._id || s.id}
+                      onClick={() => {
+                        setAiSubjectTabId(s._id || s.id);
+                        setSuccessData(null);
+                        setError('');
+                      }}
+                      className={`btn btn-sm ${isSelected ? 'btn-primary' : 'btn-outline'}`}
+                      style={{
+                        fontSize: '0.75rem',
+                        padding: '6px 12px',
+                        whiteSpace: 'nowrap',
+                        background: isSelected ? 'var(--accent-primary)' : 'transparent',
+                        borderColor: isSelected ? 'var(--accent-primary)' : 'var(--border-subtle)',
+                        color: isSelected ? '#fff' : 'var(--text-primary)'
+                      }}
+                    >
+                      📚 {s.name}
+                    </button>
                   );
-                  if (topicSpecificNotes.length > 0) {
-                    matchingNotes = topicSpecificNotes;
-                  }
-                }
+                })}
+              </div>
 
-                if (searchQuery.trim()) {
-                  const query = searchQuery.toLowerCase();
-                  matchingNotes = matchingNotes.filter(n => 
-                    (n.summary || '').toLowerCase().includes(query) || 
-                    (n.generated_notes || '').toLowerCase().includes(query) ||
-                    (n.original_text || '').toLowerCase().includes(query)
-                  );
-                }
+              {error && <div className="auth-error text-xs mb-16">{error}</div>}
+
+              {/* Render Selected Subject Details */}
+              {(() => {
+                const activeAiSub = subjects.find(s => (s._id || s.id) === aiSubjectTabId);
+                if (!activeAiSub) return null;
+
+                const todayTopic = getTodayTopicForSubject(activeAiSub.name);
+                // Search auto-generated notes matching this subject and description containing today's topic
+                const todayTopicNotes = todayTopic 
+                  ? notes.find(n => n.type === 'auto_generated' && n.subject?.toLowerCase() === activeAiSub.name.toLowerCase() && n.description?.toLowerCase().includes(todayTopic.name.toLowerCase()))
+                  : null;
 
                 return (
-                  <div 
-                    key={subId}
-                    className="card"
-                    style={{
-                      borderLeft: `4px solid ${subColor}`,
-                      padding: '16px',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '12px',
-                      boxShadow: isCurrentStudying ? `0 0 12px ${subColor}25` : 'none',
-                      transition: 'all 0.3s ease'
-                    }}
-                  >
-                    {/* Header Row */}
-                    <div className="flex-between" style={{ paddingBottom: isCurrentStudying ? '8px' : '0px', borderBottom: isCurrentStudying ? '1px solid var(--border-subtle)' : 'none' }}>
-                      <div>
-                        <h3 style={{ fontSize: '1rem', fontWeight: 700, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: subColor }}></span>
-                          {sub.name}
-                        </h3>
-                        <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
-                          Priority: <strong>{sub.priority}</strong>
-                        </p>
-                      </div>
-                      
-                      {/* Live Study Session Trigger */}
-                      <div>
-                        {isCurrentStudying ? (
-                          <button 
-                            className="btn btn-red btn-sm btn-pulse" 
-                            onClick={stopSession}
-                            style={{ fontSize: '0.75rem', padding: '6px 12px', display: 'flex', alignItems: 'center', gap: '4px' }}
-                          >
-                            ⏹️ Stop Studying
-                          </button>
-                        ) : (
-                          <button 
-                            className="btn btn-outline btn-sm" 
-                            onClick={() => startSession(subId, sub.name)}
-                            style={{ fontSize: '0.75rem', padding: '6px 12px', borderColor: subColor, color: subColor }}
-                          >
-                            📖 Start Studying
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Today's Target Topic & Notes List (Only shown when active studying session is running!) */}
-                    {isCurrentStudying && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    {todayTopicNotes ? (
+                      <div className="card" style={{ padding: '16px' }}>
+                        <div className="flex-between mb-12" style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
+                          <h3 style={{ fontSize: '0.95rem', fontWeight: 700 }}>
+                            📖 Today's Topic Focus: <span style={{ color: 'var(--accent-light)' }}>{todayTopic?.name}</span>
+                          </h3>
+                          <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>AI Study Guide</span>
+                        </div>
                         
-                        {/* Dynamic study duration timer */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
-                          <span style={{ fontSize: '0.72rem', fontWeight: 600, color: 'var(--text-secondary)' }}>⏱️ Study focus session duration:</span>
-                          <span style={{ fontSize: '0.88rem', fontWeight: 800, color: 'var(--accent-light)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            {currentFocusFormatted}
-                            <span className="timer-pulse-dot"></span>
-                          </span>
+                        {/* Live Timer Integration */}
+                        <div style={{ background: 'rgba(0,0,0,0.15)', padding: '12px', borderRadius: 'var(--radius-md)', marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div style={{ fontSize: '0.78rem', fontWeight: 600 }}>⏱️ Focus Time Tracker</div>
+                            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)' }}>Target duration: {todayTopic?.duration} mins</div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            {isActive && activeSubjectId === activeAiSub._id ? (
+                              <>
+                                <span className="badge badge-purple" style={{ fontSize: '0.7rem' }}>
+                                  Active: {formatFocusTime(secondsElapsed)}
+                                </span>
+                                <button onClick={stopSession} className="btn btn-xs" style={{ background: 'var(--text-red)', color: '#fff', fontSize: '0.65rem', padding: '4px 8px' }}>Stop</button>
+                              </>
+                            ) : (
+                              <button onClick={() => startSession(activeAiSub._id, activeAiSub.name)} className="btn btn-xs btn-primary" style={{ fontSize: '0.65rem', padding: '4px 8px' }}>
+                                ▶ Start Focus
+                              </button>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Today's Target Topic display */}
-                        <div style={{ background: 'var(--bg-input)', padding: '10px', borderRadius: '6px', border: '1px solid var(--border-subtle)' }}>
-                          <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Today's Target Topic</span>
-                          {activeTopic ? (
-                            <div style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: '2px' }}>
-                              Day {activeTopic.day}: {activeTopic.name} <span style={{ fontSize: '0.7rem', fontWeight: 500, color: 'var(--text-muted)' }}>({activeTopic.duration} mins target)</span>
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px', fontStyle: 'italic' }}>
-                              No topic scheduled for today in the study plan.
-                            </div>
-                          )}
+                        <div 
+                          className="markdown-content" 
+                          style={{ 
+                            fontSize: '0.82rem', 
+                            color: 'var(--text-secondary)', 
+                            lineHeight: '1.5', 
+                            whiteSpace: 'pre-wrap', 
+                            maxHeight: '380px',
+                            overflowY: 'auto',
+                            background: 'rgba(0,0,0,0.1)',
+                            padding: '12px',
+                            borderRadius: 'var(--radius-md)',
+                            border: '1px solid var(--border-subtle)'
+                          }}
+                        >
+                          {todayTopicNotes.summary || todayTopicNotes.original_text || todayTopicNotes.generated_notes}
                         </div>
-
-                        {/* Notes list for today's topic */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                          <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            Today's Study Notes ({matchingNotes.length})
-                          </span>
-
-                          {matchingNotes.length === 0 ? (
-                            <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', margin: '4px 0 0', fontStyle: 'italic' }}>
-                              No study notes generated for today's topic. Go to the "Manual Unit Summarizer" tab to generate one.
-                            </p>
-                          ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                              {matchingNotes.map((note) => {
-                                const noteId = note._id || note.id;
-                                const isExpanded = !!expandedNotes[noteId];
-                                const isTimeMgmtSummary = note.summary?.includes('Time Management') || note.summary?.includes('Estimated Study Time') || note.summary?.includes('|');
-                                
-                                return (
-                                  <div 
-                                    key={noteId} 
-                                    style={{ 
-                                      background: 'rgba(255,255,255,0.01)', 
-                                      border: '1px solid var(--border-subtle)', 
-                                      padding: '10px', 
-                                      borderRadius: 'var(--radius-md)', 
-                                      position: 'relative' 
-                                    }}
-                                  >
-                                    <button 
-                                      onClick={(e) => handleDeleteNote(noteId, e)}
-                                      style={{ position: 'absolute', top: 8, right: 10, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.72rem' }}
-                                      title="Delete note"
-                                    >
-                                      ✕
-                                    </button>
-                                    
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
-                                      <span style={{ fontSize: '0.72rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                                        {note.type === 'auto_generated' ? '✨ AI Study Guide' : '📝 Manual Summary'}
-                                      </span>
-                                      <span className={`badge ${isTimeMgmtSummary ? 'badge-blue' : 'badge-purple'}`} style={{ fontSize: '0.58rem', padding: '1px 5px' }}>
-                                        {isTimeMgmtSummary ? 'Time Management' : 'General Summary'}
-                                      </span>
-                                    </div>
-
-                                    {(note.unit || note.topic || note.book || note.syllabus) && (
-                                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px', marginTop: '2px' }}>
-                                        {note.unit && <span className="badge badge-blue" style={{ fontSize: '0.62rem', padding: '2px 6px' }}>📚 Unit: {note.unit}</span>}
-                                        {note.topic && <span className="badge badge-green" style={{ fontSize: '0.62rem', padding: '2px 6px' }}>🔍 Topic: {note.topic}</span>}
-                                        {note.book && <span className="badge badge-orange" style={{ fontSize: '0.62rem', padding: '2px 6px' }}>📖 Book: {note.book}</span>}
-                                        {note.syllabus && <span className="badge badge-purple" style={{ fontSize: '0.62rem', padding: '2px 6px' }}>📋 Outline: {note.syllabus}</span>}
-                                      </div>
-                                    )}
-
-                                    <div className="markdown-content" style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', lineHeight: 1.4, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
-                                      {note.summary || note.generated_notes}
-                                    </div>
-                                    
-                                    {note.original_text && (
-                                      <div style={{ marginTop: '8px', borderTop: '1px dashed var(--border-subtle)', paddingTop: '6px' }}>
-                                        <button 
-                                          className="btn btn-ghost btn-xs" 
-                                          onClick={() => toggleExpandNote(noteId)}
-                                          style={{ fontSize: '0.62rem', padding: 0, height: 'auto', color: 'var(--text-muted)' }}
-                                        >
-                                          {isExpanded ? '▼ Hide Original Text' : '▶ Show Original Text'}
-                                        </button>
-                                        {isExpanded && (
-                                          <div style={{ marginTop: '6px', padding: '8px', background: 'rgba(0,0,0,0.15)', borderRadius: '4px', fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', maxHeight: '120px', overflowY: 'auto' }}>
-                                            {note.original_text}
-                                          </div>
-                                        )}
-                                      </div>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-
+                      </div>
+                    ) : todayTopic ? (
+                      <div className="card" style={{ padding: '24px 16px', textAlign: 'center', border: '1.5px dashed var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}>
+                        <div style={{ fontSize: '2rem', marginBottom: '8px' }}>🤖</div>
+                        <h3 style={{ fontSize: '0.92rem', fontWeight: 700, marginBottom: '6px' }}>Today's scheduled topic: <span style={{ color: 'var(--accent-light)' }}>{todayTopic.name}</span></h3>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '16px', maxWidth: '400px', margin: '0 auto 16px' }}>
+                          Revision is scheduled for this topic today in the Calendar. Generate notes now to start your study guide session.
+                        </p>
+                        <button
+                          onClick={() => triggerGenerateForTodayTopic(activeAiSub, todayTopic.name)}
+                          className={`btn btn-primary ${loading ? 'btn-loading' : ''}`}
+                          disabled={loading}
+                          style={{ padding: '8px 16px', fontSize: '0.8rem' }}
+                        >
+                          {loading ? '🤖 AI is gathering notes...' : '✨ Generate AI Notes Summary'}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="card" style={{ padding: '24px 16px', textAlign: 'center', border: '1.5px dashed var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}>
+                        <div style={{ fontSize: '2rem', marginBottom: '8px' }}>📅</div>
+                        <h3 style={{ fontSize: '0.92rem', fontWeight: 700, marginBottom: '6px' }}>No Calendar Topics Scheduled</h3>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '16px', maxWidth: '400px', margin: '0 auto 16px' }}>
+                          There is no day-wise revision topic currently scheduled for today in the Study Calendar.
+                        </p>
+                        <button
+                          onClick={() => triggerGenerateForTodayTopic(activeAiSub, '')}
+                          className={`btn btn-primary ${loading ? 'btn-loading' : ''}`}
+                          disabled={loading}
+                          style={{ padding: '8px 16px', fontSize: '0.8rem' }}
+                        >
+                          {loading ? '🤖 AI is gathering notes...' : '✨ Generate General AI Notes'}
+                        </button>
                       </div>
                     )}
+
+                    {/* Subject Study Guides History */}
+                    <div className="card" style={{ padding: '16px' }}>
+                      <h3 className="section-title" style={{ fontSize: '0.95rem', marginBottom: '12px' }}>
+                        ✨ Notes History for {activeAiSub.name} ({notes.filter(n => n.type === 'auto_generated' && n.subject?.toLowerCase() === activeAiSub.name.toLowerCase()).length})
+                      </h3>
+                      {notes.filter(n => n.type === 'auto_generated' && n.subject?.toLowerCase() === activeAiSub.name.toLowerCase()).length === 0 ? (
+                        <p className="text-muted text-xs">No AI-generated notes yet for this subject.</p>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                          {notes.filter(n => n.type === 'auto_generated' && n.subject?.toLowerCase() === activeAiSub.name.toLowerCase()).map((note) => {
+                            const id = note._id || note.id;
+                            const isExpanded = !!expandedNotes[id];
+                            return (
+                              <div key={id} style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                                <div className="flex-between">
+                                  <div>
+                                    <strong style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                                      {note.description || 'General Notes'}
+                                    </strong>
+                                    <span style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginLeft: '8px' }}>
+                                      {new Date(note.created_at).toLocaleDateString()}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '6px' }}>
+                                    <button 
+                                      type="button"
+                                      className="btn btn-ghost btn-xs" 
+                                      onClick={() => toggleExpandNote(id)}
+                                      style={{ fontSize: '0.7rem', padding: '2px 6px' }}
+                                    >
+                                      {isExpanded ? 'Hide' : 'Read'}
+                                    </button>
+                                    <button 
+                                      type="button"
+                                      className="btn btn-ghost btn-xs" 
+                                      onClick={(e) => handleDeleteNote(id, e)}
+                                      style={{ fontSize: '0.7rem', padding: '2px 6px', color: 'var(--text-red)' }}
+                                    >
+                                      Delete
+                                    </button>
+                                  </div>
+                                </div>
+                                
+                                {isExpanded && (
+                                  <div 
+                                    className="markdown-content" 
+                                    style={{ 
+                                      fontSize: '0.78rem', 
+                                      color: 'var(--text-secondary)', 
+                                      lineHeight: '1.4', 
+                                      marginTop: '8px', 
+                                      borderTop: '1px solid var(--border-subtle)', 
+                                      paddingTop: '8px',
+                                      whiteSpace: 'pre-wrap'
+                                    }}
+                                  >
+                                    {note.summary || note.generated_notes || 'No content.'}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
-              })}
-            </div>
+              })()}
+            </>
           )}
         </div>
       )}
 
-      {/* OPTION 2: Manual Unit Summarizer */}
+      {/* OPTION 2: Test Ready Notes (Pasted Raw Notes & Uploads) */}
       {activeTab === 'manual' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
           <div className="card" style={{ padding: '16px' }}>
-            <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '4px' }}>⚡ AI Unit Summarizer</h2>
+            <h2 className="section-title" style={{ fontSize: '1rem', marginBottom: '4px' }}>⚡ Test Ready Notes</h2>
             <p className="page-subtitle" style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginBottom: '14px' }}>
-              Upload unit notes or paste content. The system will summarize key concepts, estimate mastering times, and prioritize concepts to optimize your study time.
+              Paste raw notes or upload study documents along with a topic name to generate a highly simplified and accurate summary ready for tests.
             </p>
 
             {error && <div className="auth-error text-xs mb-16">{error}</div>}
@@ -506,82 +573,38 @@ export default function NotesPage() {
                     ))}
                   </select>
                 </div>
-                <div className="form-group">
-                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Unit / Chapter</label>
-                  <input 
-                    className="form-input" 
-                    placeholder="e.g. Unit 1: Synaptic Anatomy" 
-                    value={manualUnit}
-                    onChange={(e) => setManualUnit(e.target.value)}
-                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                  />
-                </div>
 
+                {/* Topic Name */}
                 <div className="form-group">
-                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Syllabus / Notes Outline</label>
+                  <label className="form-label" htmlFor="summarizer-topic" style={{ fontSize: '0.75rem' }}>Topic Name *</label>
                   <input 
+                    id="summarizer-topic"
+                    type="text" 
                     className="form-input" 
-                    placeholder="e.g. Synaptic cleft, vesicle release, neurotransmitters" 
-                    value={manualSyllabus}
-                    onChange={(e) => setManualSyllabus(e.target.value)}
-                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Topic Name</label>
-                  <input 
-                    className="form-input" 
-                    placeholder="e.g. Synapses and Neurotransmitters" 
+                    placeholder="e.g. Synaptic Plasticity, Basic Anatomy"
                     value={manualTopic}
                     onChange={(e) => setManualTopic(e.target.value)}
-                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    style={{ fontSize: '0.8rem', height: '38px', padding: '8px 12px' }}
+                    required
                   />
                 </div>
 
+                {/* Paste Raw Notes */}
                 <div className="form-group">
-                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Book Reference / Chapter</label>
-                  <input 
+                  <label className="form-label" htmlFor="summarizer-rawtext" style={{ fontSize: '0.75rem' }}>Paste Raw Notes / Material *</label>
+                  <textarea 
+                    id="summarizer-rawtext"
                     className="form-input" 
-                    placeholder="e.g. Neuroscience Principles, Ch 5" 
-                    value={manualBook}
-                    onChange={(e) => setManualBook(e.target.value)}
-                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    placeholder="Paste raw text, paragraphs, or book extracts here to summarize them accurately and simply..."
+                    value={manualText}
+                    onChange={(e) => setManualText(e.target.value)}
+                    style={{ fontSize: '0.8rem', minHeight: '120px', padding: '10px 12px', fontFamily: 'Inter, sans-serif' }}
                   />
-                </div>
-
-                {/* Summary Goal Selection: Recommended/Default is Time Management */}
-                <div className="form-group">
-                  <label className="form-label" style={{ fontSize: '0.75rem' }}>Summarization Goal</label>
-                  <div style={{ display: 'flex', gap: '12px', marginTop: '4px' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
-                      <input 
-                        type="radio" 
-                        name="summaryType" 
-                        value="time_management" 
-                        checked={summaryType === 'time_management'} 
-                        onChange={() => setSummaryType('time_management')} 
-                        style={{ width: '16px', height: '16px' }}
-                      />
-                      <span>(Recommended) Time Management Plan & Key Concepts</span>
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
-                      <input 
-                        type="radio" 
-                        name="summaryType" 
-                        value="general" 
-                        checked={summaryType === 'general'} 
-                        onChange={() => setSummaryType('general')} 
-                        style={{ width: '16px', height: '16px' }}
-                      />
-                      <span>General Notes Summary</span>
-                    </label>
-                  </div>
                 </div>
 
                 {/* File Upload Zone */}
                 <div className="form-group">
-                  <label className="form-label" style={{ fontSize: '0.75rem' }}>Upload Unit/Topic Document Files (Multiple Allowed)</label>
+                  <label className="form-label" style={{ fontSize: '0.75rem' }}>Or Upload Notes Documents (PDF, DOCX, PPT, Image)</label>
                   <div 
                     className={`flex-col flex-center ${dragActive ? 'drag-active' : ''}`}
                     onDragEnter={handleDrag}
@@ -591,54 +614,29 @@ export default function NotesPage() {
                     style={{
                       border: '1.5px dashed var(--border)',
                       borderRadius: 'var(--radius-md)',
-                      padding: '14px',
+                      padding: '20px 14px',
                       textAlign: 'center',
                       background: dragActive ? 'rgba(124, 58, 237, 0.05)' : 'var(--bg-input)',
                       cursor: 'pointer'
                     }}
                     onClick={() => document.getElementById('file-upload-input').click()}
                   >
-                    <div style={{ fontSize: '1.4rem' }}>📁</div>
-                    <div style={{ fontSize: '0.72rem', fontWeight: 600 }}>
+                    <div style={{ fontSize: '1.8rem', marginBottom: '6px' }}>📁</div>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 600 }}>
                       {formFiles.length > 0 ? `Selected ${formFiles.length} file(s): ${formFiles.map(f => f.name).join(', ')}` : 'Drag files here or click to browse'}
                     </div>
+                    <p style={{ fontSize: '0.62rem', color: 'var(--text-muted)', marginTop: '4px', margin: 0 }}>
+                      Supported: PDF, Word (.docx), PowerPoint, Text, and Images
+                    </p>
                     <input 
                       id="file-upload-input" 
                       type="file" 
                       multiple
-                      accept=".txt,.md,.pdf,.docx,image/*"
+                      accept=".txt,.md,.pdf,.docx,.doc,.ppt,.pptx,image/*"
                       onChange={handleFileChange} 
                       style={{ display: 'none' }} 
                     />
                   </div>
-                </div>
-
-                {/* Raw Text Input */}
-                <div className="form-group">
-                  <label className="form-label" htmlFor="summarizer-content" style={{ fontSize: '0.75rem' }}>Or Paste Unit Content</label>
-                  <textarea 
-                    id="summarizer-content"
-                    className="form-input" 
-                    placeholder="Paste textbook sections, notes, or paragraphs here..."
-                    rows={6}
-                    value={form.text}
-                    onChange={(e) => setForm(f => ({ ...f, text: e.target.value }))}
-                    style={{ fontSize: '0.8rem', padding: '8px 12px' }}
-                    required={formFiles.length === 0}
-                  />
-                </div>
-
-                {/* Search tags */}
-                <div className="form-group">
-                  <label className="form-label" htmlFor="summarizer-tags" style={{ fontSize: '0.75rem' }}>Optional Tags (comma separated)</label>
-                  <input 
-                    id="summarizer-tags"
-                    className="form-input" 
-                    placeholder="e.g. unit-1, mid-term" 
-                    value={form.tags}
-                    onChange={(e) => setForm(f => ({ ...f, tags: e.target.value }))}
-                    style={{ fontSize: '0.8rem', height: '38px', padding: '8px 12px' }}
-                  />
                 </div>
 
                 <button 
@@ -647,7 +645,7 @@ export default function NotesPage() {
                   disabled={loading}
                   style={{ padding: '10px 16px', fontSize: '0.85rem', marginTop: '6px' }}
                 >
-                  {loading ? 'Analyzing Content...' : '✨ Generate & Save Study Guide'}
+                  {loading ? '🧠 Generating Test Ready summary...' : '✨ Generate & Save Test Ready Notes'}
                 </button>
               </form>
             )}
@@ -658,7 +656,7 @@ export default function NotesPage() {
             <div className="card animate-fade-in flex-col" style={{ gap: '10px', padding: '16px' }}>
               <div className="flex-between" style={{ borderBottom: '1px solid var(--border-subtle)', paddingBottom: '8px' }}>
                 <span style={{ fontSize: '0.9rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  🧠 Generated Study Guide: {successData.subject}
+                  🧠 Test Ready Study Guide: {successData.subject}
                 </span>
                 <span className="badge badge-green" style={{ fontSize: '0.62rem' }}>Summarized & Saved</span>
               </div>
@@ -689,16 +687,6 @@ export default function NotesPage() {
 
               <div style={{ display: 'flex', gap: '10px' }}>
                 <button 
-                  className="btn btn-outline btn-sm" 
-                  onClick={() => {
-                    setActiveTab('study');
-                    setSuccessData(null);
-                  }}
-                  style={{ fontSize: '0.75rem', padding: '6px 12px' }}
-                >
-                  📖 View in Study Tracker
-                </button>
-                <button 
                   className="btn btn-ghost btn-sm" 
                   onClick={() => setSuccessData(null)} 
                   style={{ fontSize: '0.75rem', padding: '6px 12px', color: 'var(--text-muted)' }}
@@ -709,6 +697,73 @@ export default function NotesPage() {
             </div>
           )}
 
+          {/* Manual Summaries History */}
+          <div className="card" style={{ padding: '16px', marginTop: '16px' }}>
+            <h3 className="section-title" style={{ fontSize: '0.95rem', marginBottom: '12px' }}>
+              📝 Test Ready Notes History ({notes.filter(n => n.type !== 'auto_generated').length})
+            </h3>
+            {notes.filter(n => n.type !== 'auto_generated').length === 0 ? (
+              <p className="text-muted text-xs">No Test Ready notes yet. Use the form above to compile your first test summary.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {notes.filter(n => n.type !== 'auto_generated').map((note) => {
+                  const id = note._id || note.id;
+                  const isExpanded = !!expandedNotes[id];
+                  return (
+                    <div key={id} style={{ background: 'var(--bg-input)', padding: '12px', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-subtle)' }}>
+                      <div className="flex-between">
+                        <div>
+                          <strong style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>
+                            {note.subject || 'General Notes'}
+                          </strong>
+                          {note.description && (
+                            <span style={{ fontSize: '0.72rem', color: 'var(--accent-light)', marginLeft: '8px' }}>
+                              🏷️ {note.description}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          <button 
+                            type="button"
+                            className="btn btn-ghost btn-xs" 
+                            onClick={() => toggleExpandNote(id)}
+                            style={{ fontSize: '0.7rem', padding: '2px 6px' }}
+                          >
+                            {isExpanded ? 'Hide' : 'Read'}
+                          </button>
+                          <button 
+                            type="button"
+                            className="btn btn-ghost btn-xs" 
+                            onClick={(e) => handleDeleteNote(id, e)}
+                            style={{ fontSize: '0.7rem', padding: '2px 6px', color: 'var(--text-red)' }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {isExpanded && (
+                        <div 
+                          className="markdown-content" 
+                          style={{ 
+                            fontSize: '0.78rem', 
+                            color: 'var(--text-secondary)', 
+                            lineHeight: '1.4', 
+                            marginTop: '8px', 
+                            borderTop: '1px solid var(--border-subtle)', 
+                            paddingTop: '8px',
+                            whiteSpace: 'pre-wrap'
+                          }}
+                        >
+                          {note.summary || note.generated_notes || 'No content.'}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

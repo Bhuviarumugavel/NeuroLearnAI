@@ -16,17 +16,26 @@ export default function RemindersPage() {
   useEffect(() => {
     if (showForm && user?.study_preferences?.availability) {
       const avail = user.study_preferences.availability;
-      const match = avail.match(/\d+/);
-      if (match) {
-        const hour = parseInt(match[0], 10);
-        const now = new Date();
-        const yyyy = now.getFullYear();
-        const mm = String(now.getMonth() + 1).padStart(2, '0');
-        const dd = String(now.getDate()).padStart(2, '0');
-        const hh = String(hour).padStart(2, '0');
-        const defaultDateTime = `${yyyy}-${mm}-${dd}T${hh}:00`;
-        setForm(f => ({ ...f, remind_at: defaultDateTime }));
+      let hour = 18; // default to 6 PM (Evening)
+      if (avail === 'Morning') hour = 8;
+      else if (avail === 'Afternoon') hour = 14;
+      else if (avail === 'Evening') hour = 18;
+      else if (avail === 'Night') hour = 22;
+      else if (avail === 'Weekends') hour = 10;
+      else {
+        const match = avail.match(/\d+/);
+        if (match) {
+          hour = parseInt(match[0], 10);
+        }
       }
+      
+      const now = new Date();
+      const yyyy = now.getFullYear();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const dd = String(now.getDate()).padStart(2, '0');
+      const hh = String(hour).padStart(2, '0');
+      const defaultDateTime = `${yyyy}-${mm}-${dd}T${hh}:00`;
+      setForm(f => ({ ...f, remind_at: defaultDateTime }));
     }
   }, [showForm, user]);
 

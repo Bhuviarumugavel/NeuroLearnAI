@@ -6,17 +6,147 @@ google/gemini-3.5-flash model. Each function includes a mock
 fallback for offline resilience.
 """
 from openai import OpenAI
-from app.config import OPENAI_API_KEY, OPENROUTER_BASE_URL
+from app.config import OPENROUTER_BASE_URL, API_KEYS
 import json
+import logging
+import time
+import re
 
-# Initialize the client with OpenRouter's URL and your key
+# Set up logging for the AI Engine
+logger = logging.getLogger("neurolearn.ai_engine")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+# Initialize default client using first key for backward compatibility
 client = OpenAI(
     base_url=OPENROUTER_BASE_URL,
-    api_key=OPENAI_API_KEY,
-    timeout=60.0,
+    api_key=API_KEYS[0] if API_KEYS else None,
+    timeout=15.0,
 )
 
-MODEL = "openrouter/free"
+
+MODEL = "google/gemini-2.5-flash"
+
+
+def _execute_completion_with_rotation(model: str, messages: list, max_tokens: int, temperature: float = 0.7) -> str:
+    """
+    Execute chat completion with dynamic rotation over available API keys.
+    If a key fails due to credit token reservation (HTTP 402), it dynamically reduces max_tokens to the affordable limit and retries.
+    If a key is completely out of credits or has other failures, it rotates to the next key.
+    For rate limits (HTTP 429), it sleeps/backs off or rotates keys.
+    """
+    last_exception = None
+    retries_per_key = 2
+    initial_delay = 1.0
+    backoff_factor = 2.0
+    
+    current_max_tokens = max_tokens
+
+    for idx, key in enumerate(API_KEYS):
+        try:
+            temp_client = OpenAI(
+                base_url=OPENROUTER_BASE_URL,
+                api_key=key,
+                timeout=15.0,
+            )
+            for attempt in range(1, retries_per_key + 1):
+                try:
+                    logger.info(f"LLM Call: Model '{model}' using key {idx+1}/{len(API_KEYS)} (Attempt {attempt}/{retries_per_key}, max_tokens={current_max_tokens})")
+                    response = temp_client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        max_tokens=current_max_tokens,
+                        temperature=temperature
+                    )
+                    if response.choices and len(response.choices) > 0:
+                        content = response.choices[0].message.content
+                        if content:
+                            return content
+                    raise ValueError("Empty response from model")
+                except Exception as e:
+                    status_code = getattr(e, "status_code", None)
+                    err_msg = str(e)
+                    logger.warning(
+                        f"LLM Call failed with key {idx+1}/{len(API_KEYS)} on attempt {attempt}: {err_msg} (Status: {status_code})"
+                    )
+                    last_exception = e
+
+                    # Check for 402 Payment Required credit error with affordable limit info
+                    if status_code == 402 or "402" in err_msg or "credit" in err_msg.lower():
+                        # Parse the affordable tokens limit
+                        match = re.search(r"can only afford (\d+)", err_msg)
+                        if match:
+                            affordable = int(match.group(1))
+                            new_max = max(affordable - 10, 10)
+                            if new_max < current_max_tokens:
+                                logger.info(f"Dynamically reducing max_tokens from {current_max_tokens} to {new_max} due to low credits.")
+                                current_max_tokens = new_max
+                                # Retry immediately on the same key with the lower max_tokens
+                                continue
+                        
+                        logger.warning("Low balance detected (HTTP 402). Moving to next key immediately.")
+                        break
+
+                    # Last attempt for this key
+                    if attempt == retries_per_key:
+                        break
+
+                    delay = initial_delay * (backoff_factor ** (attempt - 1))
+                    logger.info(f"Retrying key {idx+1} in {delay:.1f} seconds...")
+                    time.sleep(delay)
+        except Exception as e:
+            logger.error(f"Error in client creation or rotation execution for key index {idx}: {e}")
+            last_exception = e
+
+    if last_exception:
+        raise last_exception
+    raise RuntimeError("No API keys available to perform completion")
+
+
+def _safe_chat_completion(messages: list, max_tokens: int = 600, temperature: float = 0.7) -> str:
+    """
+    Call OpenRouter's API safely. If the primary model fails or is blocked due to 
+    low credits/token reservations, it automatically retries with other API keys
+    and falls back to stable free models.
+    """
+    # Cap reserved tokens to prevent 402 Payment Required errors on low-credit balances
+    optimized_max_tokens = min(max_tokens, 600)
+    
+    fallback_models = [
+        "google/gemma-4-31b-it:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "meta-llama/llama-3.2-3b-instruct:free",
+        "qwen/qwen3-coder:free"
+    ]
+    
+    # 1. Try primary paid model with key rotation and retry logic
+    try:
+        content = _execute_completion_with_rotation(
+            model=MODEL,
+            messages=messages,
+            max_tokens=optimized_max_tokens,
+            temperature=temperature
+        )
+        logger.info(f"Primary model {MODEL} call succeeded.")
+        return content
+    except Exception as e:
+        logger.warning(f"All keys failed for primary model {MODEL}. Transitioning to free fallbacks. Error: {e}")
+
+    # 2. Attempt fallback models sequentially (also using rotation)
+    for fallback in fallback_models:
+        try:
+            content = _execute_completion_with_rotation(
+                model=fallback,
+                messages=messages,
+                max_tokens=optimized_max_tokens,
+                temperature=temperature
+            )
+            logger.info(f"Fallback model {fallback} succeeded!")
+            return content
+        except Exception as fe:
+            logger.warning(f"Fallback model {fallback} failed on all keys: {fe}")
+                     
+    # Re-raise the original error if all fallbacks fail
+    raise RuntimeError("All configured AI models (primary and fallbacks) failed to respond on all keys.")
 
 
 def _parse_json_response(content: str):
@@ -63,25 +193,24 @@ def _parse_json_response(content: str):
 def summarize_notes(raw_text: str) -> str:
     """Raw text -> High-accuracy synthesized study guide."""
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
+        truncated_text = raw_text[:8000]
+        return _safe_chat_completion(
             messages=[
                 {
                     "role": "system", 
                     "content": (
-                        "You are an expert academic tutor and study researcher. Your goal is to synthesize the provided study text with maximum factual accuracy, conceptual depth, and clarity. "
-                        "Do not omit core technical terms, formulas, key dates, or logical arguments. "
-                        "Structure the output into: \n"
-                        "1. **Core Synopsis**: A clear, high-level summary of the entire note.\n"
-                        "2. **Key Concepts & Definitions**: Elaborate on all major terminologies and concepts in the notes.\n"
-                        "3. **Critical Takeaways**: A structured bullet list of the most important points to remember."
+                        "You are an expert academic tutor. Your goal is to synthesize the provided study text into an exam-ready guide with maximum factual accuracy, conceptual depth, and clarity.\n\n"
+                        "Structure the output exactly into these four sections:\n"
+                        "1. **Short Summary**: A concise high-level overview of the note.\n"
+                        "2. **Important Concepts**: Elaborate explanation of all major terminologies, concepts, and definitions.\n"
+                        "3. **Key Points**: A structured bullet list of critical takeaways to remember.\n"
+                        "4. **Exam Ready Notes**: Synthesized core notes containing formulas, key dates, facts, and logical arguments ready for exams."
                     )
                 },
-                {"role": "user", "content": raw_text}
+                {"role": "user", "content": truncated_text}
             ],
             max_tokens=1800
         )
-        return response.choices[0].message.content
     except Exception as e:
         # Offline mock fallback
         return f"Offline Mock Summary for: {raw_text[:30]}...\n- Key Concept 1\n- Key Concept 2"
@@ -90,8 +219,8 @@ def summarize_notes(raw_text: str) -> str:
 def summarize_notes_time_management(raw_text: str) -> str:
     """Summarize text specifically focusing on key concepts, difficulty, and study time management estimation."""
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
+        truncated_text = raw_text[:8000]
+        return _safe_chat_completion(
             messages=[
                 {
                     "role": "system",
@@ -106,11 +235,10 @@ def summarize_notes_time_management(raw_text: str) -> str:
                         "3. **Actionable Study Roadmap**: A step-by-step recommendation on how to distribute study sessions across the week."
                     ),
                 },
-                {"role": "user", "content": raw_text}
+                {"role": "user", "content": truncated_text}
             ],
             max_tokens=2000
         )
-        return response.choices[0].message.content
     except Exception as e:
         # Offline mock fallback
         return (
@@ -132,32 +260,45 @@ def summarize_image(base64_image: str, mime_type: str, summary_type: str = "gene
         if summary_type != "time_management" else
         "Extract all study notes and concepts from this image and summarize them into a time management study guide. Focus on: 1. Key Concepts, 2. Difficulty Rating (Low/Medium/Hard), 3. Estimated Study Time (in minutes) to master each topic, 4. Recommended Study Techniques. Format as a clean markdown table or structured checklist."
     )
-    try:
-        response = client.chat.completions.create(
-            model=MODEL,
-            messages=[
+    
+    optimized_max_tokens = 600
+    
+    messages = [
+        {
+            "role": "user",
+            "content": [
                 {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": system_prompt
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{base64_image}"
-                            }
-                        }
-                    ]
+                    "type": "text",
+                    "text": system_prompt
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{base64_image}"
+                    }
                 }
-            ],
-            max_tokens=2000
+            ]
+        }
+    ]
+    
+    try:
+        return _execute_completion_with_rotation(
+            model=MODEL,
+            messages=messages,
+            max_tokens=optimized_max_tokens
         )
-        return response.choices[0].message.content
     except Exception as e:
-        # Offline mock fallback
-        return f"Offline Mock Summary for Image (Could not connect to multimodal AI): {str(e)}"
+        print(f"[AI-ENGINE-WARN] Multimodal primary model failed on all keys: {e}")
+        try:
+            print("[AI-ENGINE-INFO] Attempting multimodal fallback: nvidia/nemotron-nano-12b-v2-vl:free")
+            return _execute_completion_with_rotation(
+                model="nvidia/nemotron-nano-12b-v2-vl:free",
+                messages=messages,
+                max_tokens=optimized_max_tokens
+            )
+        except Exception as fe:
+            print(f"[AI-ENGINE-WARN] Multimodal fallback failed on all keys: {fe}")
+            return f"Offline Mock Summary for Image (Could not connect to multimodal AI): {str(e)}"
 
 
 
@@ -165,24 +306,23 @@ def summarize_image(base64_image: str, mime_type: str, summary_type: str = "gene
 # 2. Quiz Generation
 # ─────────────────────────────────────────────────────────
 
-def generate_structured_quiz(raw_text: str, num_questions: int = 5, user_ability: str = "Medium") -> list:
-    """Text -> N-question MCQ (JSON array) adjusted to user academic ability."""
+def generate_structured_quiz(raw_text: str, num_questions: int = 5, user_ability: str = "Medium", topic: str = "") -> list:
+    """Text -> N-question MCQ (JSON array) adjusted to user academic ability and focus topic."""
     try:
+        topic_clause = f" specifically covering the topic '{topic}'" if topic else ""
         system_content = (
             f"You are an elite academic assessment creator. Generate {num_questions} multiple choice questions "
-            f"from the provided text. Adjust the question complexity and vocabulary to align with the user's profile ability: '{user_ability}'.\n\n"
+            f"from the provided text{topic_clause}. Adjust the question complexity and vocabulary to align with the user's profile ability: '{user_ability}'.\n\n"
             "Return a valid JSON array of objects (no markdown blocks), each matching this schema exactly:\n"
             '{"question": "The question text?", "options": ["Option A", "Option B", "Option C", "Option D"], "answer": "The correct option text exactly"}'
         )
-        response = client.chat.completions.create(
-            model=MODEL,
+        content = _safe_chat_completion(
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": f"Source study materials:\n{raw_text}"},
             ],
             max_tokens=1500
         )
-        content = response.choices[0].message.content
         result = _parse_json_response(content)
         if result:
             return result
@@ -196,28 +336,25 @@ def generate_structured_quiz(raw_text: str, num_questions: int = 5, user_ability
 # ─────────────────────────────────────────────────────────
 
 def generate_automatic_notes(description: str) -> str:
-    """Subject description -> Full comprehensive study notes via AI"""
+    """Subject description -> Simple and clear topic summary notes via AI"""
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
+        return _safe_chat_completion(
             messages=[
                 {
                     "role": "system",
                     "content": (
-                        "You are an expert academic study assistant. Generate comprehensive, well-structured study notes "
-                        "based on the subject description provided. Format the notes with clear headings, subheadings, "
-                        "bullet points, key definitions, important formulas (if applicable), and example problems. "
-                        "Make the notes exam-ready and suitable for self-study. Use markdown formatting."
+                        "You are an expert academic study assistant. Generate simple, clear, and highly focused study notes "
+                        "and a concise summary for the specified topic. Explain key concepts simply, outline important points, "
+                        "and provide a clear overview. Keep the content simple, clear, and easy to understand. Use markdown."
                     ),
                 },
                 {
                     "role": "user",
-                    "content": f"Generate detailed study notes for the following subject:\n\n{description}",
+                    "content": f"Generate simple, clear study notes for the following topic:\n\n{description}",
                 },
             ],
-            max_tokens=2500
+            max_tokens=1500
         )
-        return response.choices[0].message.content
     except Exception:
         return (
             f"# Study Notes: {description[:60]}...\n\n"
@@ -241,15 +378,15 @@ def generate_automatic_notes(description: str) -> str:
 def generate_study_plan(description: str, subject_name: str, deadline: str, daily_minutes: int) -> list | None:
     """Generate AI-powered day-wise study plan from subject description"""
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
+        truncated_desc = description[:4000]
+        content = _safe_chat_completion(
             messages=[
                 {
                     "role": "system",
                     "content": (
                         "You are a professional study planner AI and curriculum developer. Create a detailed day-wise study plan based on the subject description.\n"
                         "Break the syllabus down logically into sequential study topics.\n"
-                        "Avoid generic placeholders. Instead, extract real sub-topics and concepts relevant to the subject.\n"
+                        "Keep topic names extremely short, simple, and clean (maximum 3 words, e.g. 'Basic Anatomy', 'Action Potentials', 'Synapses'). Avoid long descriptions or compound sentences.\n"
                         "Return ONLY a valid JSON array of objects (no markdown blocks, no backticks, no comments), each matching this schema exactly:\n"
                         '{"name": "Specific Topic Name", "day": 1, "duration": 60}'
                     ),
@@ -258,7 +395,7 @@ def generate_study_plan(description: str, subject_name: str, deadline: str, dail
                     "role": "user",
                     "content": (
                         f"Subject: {subject_name}\n"
-                        f"Description: {description}\n"
+                        f"Description: {truncated_desc}\n"
                         f"Deadline: {deadline}\n"
                         f"Daily study target time: {daily_minutes} minutes\n\n"
                         "Generate study plan JSON array."
@@ -267,7 +404,6 @@ def generate_study_plan(description: str, subject_name: str, deadline: str, dail
             ],
             max_tokens=1500
         )
-        content = response.choices[0].message.content
         parsed = _parse_json_response(content)
         if parsed and isinstance(parsed, list) and len(parsed) > 0:
             return parsed
@@ -331,8 +467,7 @@ def generate_study_plan(description: str, subject_name: str, deadline: str, dail
 def generate_recommendations(context: str) -> str:
     """Generate personalized study recommendations based on user data."""
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
+        return _safe_chat_completion(
             messages=[
                 {
                     "role": "system",
@@ -349,7 +484,6 @@ def generate_recommendations(context: str) -> str:
             ],
             max_tokens=1500
         )
-        return response.choices[0].message.content
     except Exception:
         return (
             "📚 **Study Recommendations**\n\n"
@@ -368,8 +502,7 @@ def generate_recommendations(context: str) -> str:
 def generate_flashcards(text: str, num_cards: int = 10) -> list:
     """Generate flashcards (Q&A pairs) from source text."""
     try:
-        response = client.chat.completions.create(
-            model=MODEL,
+        content = _safe_chat_completion(
             messages=[
                 {
                     "role": "system",
@@ -384,7 +517,6 @@ def generate_flashcards(text: str, num_cards: int = 10) -> list:
             ],
             max_tokens=1500
         )
-        content = response.choices[0].message.content
         result = _parse_json_response(content)
         if result:
             return result
@@ -446,15 +578,13 @@ def generate_notes_for_topic(topic_name: str, subject_name: str, web_context: st
         if web_context:
             user_content += f"\n\nUse the following gathered web information as additional reference:\n{web_context}"
             
-        response = client.chat.completions.create(
-            model=MODEL,
+        return _safe_chat_completion(
             messages=[
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_content}
             ],
             max_tokens=2000
         )
-        return response.choices[0].message.content
     except Exception as e:
         return (
             f"### Study Notes: {topic_name}\n\n"

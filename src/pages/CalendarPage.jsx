@@ -27,13 +27,19 @@ export default function CalendarPage() {
   // Modal Interactive States (for actions)
   const [clickedDateStr, setClickedDateStr] = useState(null); // 'YYYY-MM-DD'
   const [showModal, setShowModal] = useState(false);
-  const [modalTab, setModalTab] = useState('event'); // 'event' | 'deadline'
+  const [modalTab, setModalTab] = useState('event'); // 'event' | 'deadline' | 'edit_topic'
   
   // Form Inputs
   const [eventMessage, setEventMessage] = useState('');
+  const [eventType, setEventType] = useState('Personal Event');
   const [targetSubjectId, setTargetSubjectId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [modalError, setModalError] = useState('');
+
+  // Edit Topic states
+  const [editingTopic, setEditingTopic] = useState(null);
+  const [editTopicName, setEditTopicName] = useState('');
+  const [editTopicDuration, setEditTopicDuration] = useState(60);
 
   const [expandedNotes, setExpandedNotes] = useState({});
 
@@ -84,15 +90,47 @@ export default function CalendarPage() {
     try {
       const remindAt = new Date(`${clickedDateStr}T12:00:00`).toISOString();
       await api.post('/api/reminders/trigger', {
-        message: eventMessage,
+        message: `${eventType}: ${eventMessage}`,
         remind_at: remindAt
       });
       
-      await refreshReminders();
+      await refreshAll();
       setShowModal(false);
       setEventMessage('');
+      setEventType('Personal Event');
     } catch (err) {
       setModalError('Failed to save calendar event.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const openEditTopicModal = (planId, topicIndex, name, duration, dateStr) => {
+    setClickedDateStr(dateStr);
+    setEditingTopic({ planId, topicIndex, name, duration });
+    setEditTopicName(name);
+    setEditTopicDuration(duration);
+    setModalTab('edit_topic');
+    setModalError('');
+    setShowModal(true);
+  };
+
+  const handleUpdateTopicDetails = async (e) => {
+    e.preventDefault();
+    if (!editTopicName.trim()) return;
+
+    setSubmitting(true);
+    setModalError('');
+    try {
+      await api.put(`/api/study-plans/${editingTopic.planId}/topic-details`, {
+        topic_index: editingTopic.topicIndex,
+        name: editTopicName,
+        duration: Number(editTopicDuration)
+      });
+      await refreshAll();
+      setShowModal(false);
+    } catch (err) {
+      setModalError('Failed to update topic details.');
     } finally {
       setSubmitting(false);
     }
@@ -113,7 +151,7 @@ export default function CalendarPage() {
         deadline: clickedDateStr
       });
 
-      await refreshSubjects();
+      await refreshAll();
       setShowModal(false);
     } catch (err) {
       setModalError('Failed to update subject exam date.');
@@ -219,19 +257,23 @@ export default function CalendarPage() {
   return (
     <div className="page-container animate-slide-up">
       {/* Header */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '12px', marginBottom: '12px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h1 className="page-title" style={{ fontSize: '1.4rem' }}>📅 Study Calendar</h1>
+          <div>
+            <span style={{ fontSize: '0.65rem', textTransform: 'uppercase', color: 'var(--accent-light)', fontWeight: 700, letterSpacing: '0.5px' }}>Today</span>
+            <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)', margin: '2px 0 0' }}>
+              {new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+            </h2>
+          </div>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <button className="btn btn-outline btn-sm" onClick={() => setCurrentDate(new Date(year, month - 1, 1))} style={{ padding: '4px 8px', fontSize: '0.72rem' }}>◀</button>
-            <span style={{ fontFamily: 'Outfit', fontWeight: 700, fontSize: '0.88rem', minWidth: '90px', textAlign: 'center' }}>
+            <span style={{ fontFamily: 'Outfit', fontWeight: 700, fontSize: '0.82rem', minWidth: '85px', textAlign: 'center' }}>
               {monthNames[month]} {year}
             </span>
             <button className="btn btn-outline btn-sm" onClick={() => setCurrentDate(new Date(year, month + 1, 1))} style={{ padding: '4px 8px', fontSize: '0.72rem' }}>▶</button>
           </div>
         </div>
-        <p className="page-subtitle" style={{ fontSize: '0.78rem', margin: 0 }}>Timeline scheduler showing scheduled subject study topics day-wise.</p>
       </div>
 
       {loadingLocal ? (
@@ -374,12 +416,9 @@ export default function CalendarPage() {
                                   color: topic.completed ? 'var(--text-muted)' : 'var(--text-primary)',
                                   textDecoration: topic.completed ? 'line-through' : 'none'
                                 }}>
-                                  {topic.name}
+                                  {topic.subjectName}: {topic.name} ({topic.duration}m)
                                 </span>
                               </div>
-                              <span style={{ fontSize: '0.6rem', color: subColor, fontWeight: 700 }}>
-                                {topic.subjectName} ({topic.duration}m)
-                              </span>
                             </div>
                           );
                         })}
@@ -506,6 +545,14 @@ export default function CalendarPage() {
                             <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginLeft: '8px' }}>
                               ({topic.duration} mins target)
                             </span>
+                            <button
+                              type="button"
+                              onClick={() => openEditTopicModal(topic.planId, topic.topicIndex, topic.name, topic.duration, selectedDayInfo.dateStr)}
+                              style={{ background: 'none', border: 'none', color: 'var(--accent-light)', cursor: 'pointer', fontSize: '0.72rem', marginLeft: '8px', padding: 0 }}
+                              title="Edit Topic Details"
+                            >
+                              ✏️ Edit
+                            </button>
                           </div>
                         </div>
 
@@ -606,41 +653,61 @@ export default function CalendarPage() {
         <div className="overlay" style={{ zIndex: 1100 }}>
           <div className="modal animate-slide-up" style={{ padding: '20px', maxWidth: '380px' }}>
             <div className="modal-header" style={{ marginBottom: '14px' }}>
-              <h3 style={{ fontSize: '0.98rem' }}>📅 Manage: {clickedDateStr}</h3>
+              <h3 style={{ fontSize: '0.98rem' }}>
+                {modalTab === 'edit_topic' ? '✏️ Edit Topic details' : `📅 Manage: ${clickedDateStr}`}
+              </h3>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)} style={{ fontSize: '0.9rem', padding: '4px' }}>✕</button>
             </div>
-
+ 
             {/* Tabs */}
-            <div style={{ display: 'flex', gap: '6px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '6px', marginBottom: '16px' }}>
-              <button 
-                type="button"
-                className={`btn btn-sm ${modalTab === 'event' ? 'btn-primary' : 'btn-ghost'}`}
-                onClick={() => setModalTab('event')}
-                style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }}
-              >
-                🔔 Add Alert
-              </button>
-              <button 
-                type="button"
-                className={`btn btn-sm ${modalTab === 'deadline' ? 'btn-primary' : 'btn-ghost'}`}
-                onClick={() => setModalTab('deadline')}
-                style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }}
-              >
-                ⚙️ Set Exam Date
-              </button>
-            </div>
-
+            {modalTab !== 'edit_topic' && (
+              <div style={{ display: 'flex', gap: '6px', borderBottom: '1px solid var(--border-subtle)', paddingBottom: '6px', marginBottom: '16px' }}>
+                <button 
+                  type="button"
+                  className={`btn btn-sm ${modalTab === 'event' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setModalTab('event')}
+                  style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }}
+                >
+                  🔔 Add Alert
+                </button>
+                <button 
+                  type="button"
+                  className={`btn btn-sm ${modalTab === 'deadline' ? 'btn-primary' : 'btn-ghost'}`}
+                  onClick={() => setModalTab('deadline')}
+                  style={{ flex: 1, fontSize: '0.75rem', padding: '6px' }}
+                >
+                  ⚙️ Set Exam Date
+                </button>
+              </div>
+            )}
+ 
             {modalError && <div className="auth-error text-xs mb-16">{modalError}</div>}
-
+ 
             {/* Tab 1: Custom Event Creation */}
             {modalTab === 'event' && (
               <form onSubmit={handleAddCustomEvent} className="flex-col" style={{ gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Event Category</label>
+                  <select 
+                    className="form-input" 
+                    value={eventType} 
+                    onChange={(e) => setEventType(e.target.value)}
+                    style={{ background: 'var(--bg-input)', fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                  >
+                    <option value="Unit Test">📚 Unit Test</option>
+                    <option value="Semester Exam">🎓 Semester Exam</option>
+                    <option value="Assignment">📝 Assignment</option>
+                    <option value="Project Review">💻 Project Review</option>
+                    <option value="Viva">🗣️ Viva</option>
+                    <option value="Personal Event">🌟 Personal Event</option>
+                  </select>
+                </div>
                 <div className="form-group">
                   <label className="form-label" htmlFor="calendar-event-title" style={{ fontSize: '0.72rem' }}>Event / Test Title</label>
                   <input 
                     id="calendar-event-title"
                     className="form-input" 
-                    placeholder="e.g. 2 lessons test" 
+                    placeholder="e.g. Midterm exam or Project viva" 
                     value={eventMessage}
                     onChange={(e) => setEventMessage(e.target.value)}
                     style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
@@ -657,7 +724,7 @@ export default function CalendarPage() {
                 </button>
               </form>
             )}
-
+ 
             {/* Tab 2: Change Subject Exam Deadline */}
             {modalTab === 'deadline' && (
               <form onSubmit={handleChangeSubjectDeadline} className="flex-col" style={{ gap: '12px' }}>
@@ -686,6 +753,42 @@ export default function CalendarPage() {
                   style={{ fontSize: '0.8rem', padding: '10px' }}
                 >
                   {submitting ? 'Rescheduling...' : 'Set Exam Date'}
+                </button>
+              </form>
+            )}
+
+            {/* Tab 3: Edit Study Plan Topic Details */}
+            {modalTab === 'edit_topic' && (
+              <form onSubmit={handleUpdateTopicDetails} className="flex-col" style={{ gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Topic Name</label>
+                  <input 
+                    className="form-input" 
+                    value={editTopicName}
+                    onChange={(e) => setEditTopicName(e.target.value)}
+                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label" style={{ fontSize: '0.72rem' }}>Focus Duration (minutes)</label>
+                  <input 
+                    type="number"
+                    min={5}
+                    className="form-input" 
+                    value={editTopicDuration}
+                    onChange={(e) => setEditTopicDuration(Number(e.target.value))}
+                    style={{ fontSize: '0.8rem', height: '36px', padding: '8px 12px' }}
+                    required
+                  />
+                </div>
+                <button 
+                  type="submit" 
+                  className={`btn btn-primary btn-full ${submitting ? 'btn-loading' : ''}`}
+                  disabled={submitting || !editTopicName.trim()}
+                  style={{ fontSize: '0.8rem', padding: '10px' }}
+                >
+                  {submitting ? 'Updating...' : 'Save Changes'}
                 </button>
               </form>
             )}
